@@ -1,0 +1,19 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+/home/x379975/bookstack-sp156-C/book_cartas_servicos/src/__pycache__
+
+# Dados e artefatos gerados em runtime (não fazem parte do código)
+airflow/logs/*
+!airflow/logs/.gitkeep
+backups/*.sql.gz
+book_cartas_servicos/dados/*.json
+
+# Certificados e logs do nginx (sensíveis / gerados)
+nginx/certs/*
+!nginx/certs/.gitkeep
+nginx/logs/*
+!nginx/logs/.gitkeep
