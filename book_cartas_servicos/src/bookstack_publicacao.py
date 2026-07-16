@@ -1,20 +1,19 @@
-"""
-Publica os serviços/informativos coletados do SP156 no BookStack.
-
-Fluxo geral: ler JSON já limpo -> Estante > Livro > Capítulo > Página
--> decidir se cria/atualiza/pula/marca conflito (via hash de conteúdo)
--> registrar tudo numa página de histórico.
-"""
 import os
 import json
 import html
+import re
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
-
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from src.coleta import (
+    MARCADOR_LINK_INICIO,
+    MARCADOR_LINK_MEIO,
+    MARCADOR_LINK_FIM,
+    MARCADOR_PARAGRAFO,
+)
 
 from src.hash_bookstack import (
     hash_de_conteudo,
@@ -29,9 +28,6 @@ from src.hash_bookstack import (
     ACAO_CONFLITO,
 )
 
-# =============================================================================
-# Sessão HTTP com retry automático
-# =============================================================================
 _SESSAO = requests.Session()
 _ADAPTADOR = HTTPAdapter(
     max_retries=Retry(
@@ -55,30 +51,24 @@ STATUS_REJEITADA = "REJEITADA (fonte oficial restaurada)"
 TAG_APROVADO = "sp156_aprovado"
 TAG_REJEITADO = "sp156_rejeitado"
 
-
 def _headers() -> dict:
     return {
         "Authorization": f"Token {os.environ['BOOKSTACK_TOKEN_ID']}:{os.environ['BOOKSTACK_TOKEN_SECRET']}",
         "Content-Type": "application/json",
     }
 
-
 def _request(metodo: str, endpoint: str, **kwargs) -> requests.Response:
     url = f"{os.environ['BOOKSTACK_URL']}/api/{endpoint}"
     return _SESSAO.request(metodo, url, headers=_headers(), timeout=20, **kwargs)
 
-
 def _get(endpoint: str, params: dict | None = None) -> requests.Response:
     return _request("GET", endpoint, params=params or {})
-
 
 def _post(endpoint: str, body: dict) -> requests.Response:
     return _request("POST", endpoint, json=body)
 
-
 def _put(endpoint: str, body: dict) -> requests.Response:
     return _request("PUT", endpoint, json=body)
-
 
 def _buscar_id_por_nome(endpoint: str, nome: str, filtro_extra: dict | None = None) -> int | None:
     resposta = _get(endpoint, params={"filter[name]": nome, "count": 1})
@@ -91,27 +81,17 @@ def _buscar_id_por_nome(endpoint: str, nome: str, filtro_extra: dict | None = No
             return item["id"]
     return None
 
-
 def _obter_pagina_por_id(pagina_id: int) -> dict | None:
     resposta = _get(f"pages/{pagina_id}")
     return resposta.json() if resposta.status_code == 200 else None
-
 
 def _pagina_compativel_com_tipo(pagina: dict, tipo: str) -> bool:
     tipos_na_pagina = {t.get("value") for t in (pagina.get("tags") or []) if t.get("name") == "sp156_tipo"}
     return not tipos_na_pagina or tipo in tipos_na_pagina
 
-
 def _pagina_compativel_com_codigo(pagina: dict, codigo_servico: str) -> bool:
-    # Duas páginas diferentes podem ter o MESMO nome (ex: "Fazer reclamação"
-    # se repete em várias categorias). Sem esta checagem, o item que roda
-    # por segundo "encontra" a página do primeiro pelo nome e sobrescreve o
-    # conteúdo dele, em vez de criar a própria página — silenciosamente
-    # reduz a quantidade final publicada. Só considera "a mesma página" se
-    # ela não tiver o código de nenhum outro serviço, ou já for deste.
     codigos_na_pagina = {t.get("value") for t in (pagina.get("tags") or []) if t.get("name") == "sp156_codigo_servico"}
     return not codigos_na_pagina or codigo_servico in codigos_na_pagina
-
 
 def _obter_ou_criar(endpoint: str, nome: str, rotulo: str,
                      filtro_extra: dict | None = None,
@@ -129,16 +109,13 @@ def _obter_ou_criar(endpoint: str, nome: str, rotulo: str,
     print(f"{indent}[{rotulo}] '{nome}' criado - ID {novo_id}")
     return novo_id
 
-
 def obter_estante(nome: str) -> int:
     return _obter_ou_criar("shelves", nome, "Estante")
-
 
 def obter_livro(nome: str, estante_id: int) -> int:
     livro_id = _obter_ou_criar("books", nome, "Livro")
     _vincular_livro_a_estante(estante_id, livro_id)
     return livro_id
-
 
 def _vincular_livro_a_estante(estante_id: int, livro_id: int) -> None:
     resposta = _get(f"shelves/{estante_id}")
@@ -146,13 +123,11 @@ def _vincular_livro_a_estante(estante_id: int, livro_id: int) -> None:
     if livro_id not in livros_atuais:
         _put(f"shelves/{estante_id}", {"books": livros_atuais + [livro_id]})
 
-
 def obter_capitulo(nome: str, livro_id: int) -> int:
     return _obter_ou_criar(
         "chapters", nome, "Capitulo",
         filtro_extra={"book_id": livro_id}, corpo_extra={"book_id": livro_id}, indent="  ",
     )
-
 
 def agrupar_por_capitulo(itens: list[dict], categoria: str) -> dict[str, list[dict]]:
     grupos: dict[str, list[dict]] = defaultdict(list)
@@ -162,6 +137,29 @@ def agrupar_por_capitulo(itens: list[dict], categoria: str) -> dict[str, list[di
         grupos[nome_capitulo].append(item)
     return grupos
 
+_PADRAO_LINK_MARCADO = re.compile(
+    rf"{MARCADOR_LINK_INICIO}(.*?){MARCADOR_LINK_MEIO}(.*?){MARCADOR_LINK_FIM}"
+)
+
+def _linkificar(pedaco: str) -> str:
+    resultado = []
+    posicao = 0
+    for m in _PADRAO_LINK_MARCADO.finditer(pedaco):
+        resultado.append(html.escape(pedaco[posicao:m.start()]))
+        texto_link = html.escape(m.group(1))
+        href = html.escape(m.group(2), quote=True)
+        resultado.append(f'<a href="{href}" target="_blank" rel="noopener noreferrer">{texto_link}</a>')
+        posicao = m.end()
+    resultado.append(html.escape(pedaco[posicao:]))
+    return "".join(resultado)
+
+
+def texto_de_campo_para_html(texto_campo: str) -> str:
+    partes = [p.strip() for p in texto_campo.split(MARCADOR_PARAGRAFO)]
+    partes = [p for p in partes if p]
+    if not partes:
+        return ""
+    return "".join(f"<p>{_linkificar(p)}</p>" for p in partes)
 
 def preparar_pagina(servico: dict, capitulo: str, rotulo_tipo: str) -> tuple[str, str]:
     nome = (servico.get("nome") or servico.get("categoria") or "Sem nome").strip()
@@ -175,17 +173,15 @@ def preparar_pagina(servico: dict, capitulo: str, rotulo_tipo: str) -> tuple[str
     )
 
     secoes = [
-        f'<h4>{html.escape(campo)}</h4><p>{html.escape(valor.strip()).replace(chr(10), "<br>")}</p>'
+        f'<h4>{html.escape(campo)}</h4>{texto_de_campo_para_html(valor)}'
         for campo, valor in (servico.get("informacoes", {}) or {}).items()
         if (valor or "").strip()
     ]
     corpo = "".join(secoes) or "<p><em>Sem detalhes estruturados para este item.</em></p>"
     return nome, cabecalho + corpo
 
-
 def tem_conteudo_real(servico: dict) -> bool:
     return any((v or "").strip() for v in (servico.get("informacoes", {}) or {}).values())
-
 
 def localizar_pagina_existente(nome: str, capitulo_id: int, tipo: str, codigo_servico: str):
     salvo = obter_hashes_salvos(tipo, codigo_servico)
@@ -206,7 +202,6 @@ def localizar_pagina_existente(nome: str, capitulo_id: int, tipo: str, codigo_se
             return candidato_id, None, None, pagina
     return None, None, None, None
 
-
 def _resolucao_de_conflito(pagina: dict) -> str | None:
     nomes_tags = {(t.get("name") or "").strip().lower() for t in (pagina.get("tags") or [])}
     if TAG_REJEITADO in nomes_tags:
@@ -214,7 +209,6 @@ def _resolucao_de_conflito(pagina: dict) -> str | None:
     if TAG_APROVADO in nomes_tags:
         return "aprovado"
     return None
-
 
 def _resolver_conflito_marcado(
     resolucao: str, pagina_atual: dict, pagina_id: int, capitulo_id: int, livro_id: int,
@@ -231,14 +225,12 @@ def _resolver_conflito_marcado(
     salvar_hashes(tipo, codigo_servico, hash_novo, hash_novo, pagina_id, em_conflito=False)
     return STATUS_REJEITADA
 
-
 def decidir_acao(
     html_novo: str, salvo: dict | None,
     hash_atual_no_bookstack: str | None, pagina_existe: bool,
 ) -> tuple[str, str]:
     hash_fonte_novo = hash_de_conteudo(html_novo)
     return _decidir_acao_pelo_hash(hash_fonte_novo, salvo, hash_atual_no_bookstack, pagina_existe), hash_fonte_novo
-
 
 def criar_atualizar(pagina_id: int | None, capitulo_id: int, livro_id: int,
                      nome: str, html_pagina: str, tipo: str, codigo_servico: str) -> int:
@@ -255,7 +247,6 @@ def criar_atualizar(pagina_id: int | None, capitulo_id: int, livro_id: int,
 
     _put(f"pages/{pagina_id}", {"name": nome, "html": html_pagina, "tags": tags})
     return pagina_id
-
 
 def publicar_pagina(servico: dict, capitulo_nome: str, capitulo_id: int, livro_id: int) -> str:
     tipo = servico.get("tipo", "servico")
@@ -285,14 +276,12 @@ def publicar_pagina(servico: dict, capitulo_nome: str, capitulo_id: int, livro_i
     salvar_hashes(tipo, codigo_servico, hash_novo, hash_novo, pagina_id)
     return STATUS_CRIADA if acao == ACAO_CRIAR else STATUS_ATUALIZADA
 
-
 def _secao_instrucoes() -> str:
     return (
         "<h4>Como resolver um conflito (pra quem edita)</h4>"
         "<p>Quando uma página aparece na lista \"Editado manualmente — aguardando revisão\" abaixo, "
         "o robô parou de atualizá-la sozinho... </p>"
     )
-
 
 def _secao_automatica(eventos: list[dict], agora: str) -> str:
     titulo = f"<h4>Atualizado automaticamente (execução de {agora})</h4>"
@@ -304,7 +293,6 @@ def _secao_automatica(eventos: list[dict], agora: str) -> str:
     )
     return f"{titulo}<ul>{itens}</ul>"
 
-
 def _secao_manual(conflitos: list[dict]) -> str:
     titulo = "<h4>Editado manualmente — aguardando revisão</h4>"
     if not conflitos:
@@ -315,7 +303,6 @@ def _secao_manual(conflitos: list[dict]) -> str:
         for c in conflitos
     )
     return f"{titulo}<ul>{itens}</ul>"
-
 
 def publicar_pagina_de_atualizacoes(estante_id: int, eventos_desta_execucao: list[dict]) -> None:
     NOME_LIVRO = "Atualizações"
@@ -345,16 +332,11 @@ ROTULO_ACAO_EVENTO = {
     STATUS_REJEITADA: "conflito resolvido — conteúdo oficial restaurado",
 }
 
-
 def carregar_json(caminho_arquivo: str) -> dict:
     return json.loads(Path(caminho_arquivo).read_text(encoding="utf-8"))
 
-
 def filtrar_smsub(servicos: list[dict]) -> list[dict]:
-    # ---> MUDANÇA CIRÚRGICA: Os dados já vêm limpos e filtrados da Etapa 3.
-    # Esta função agora é um validador de integridade simples.
     return [s for s in servicos if s]
-
 
 def _registrar_evento(nome_bruto: str, rotulo_tipo: str, nome_livro: str, capitulo_nome: str,
                        status: str, resultado: dict, eventos: list) -> None:
@@ -368,7 +350,6 @@ def _registrar_evento(nome_bruto: str, rotulo_tipo: str, nome_livro: str, capitu
             "acao": rotulo_acao,
         })
     print(f"    [{status}] {nome_bruto} ({rotulo_tipo}) — {nome_livro} › {capitulo_nome}")
-
 
 def publicar_no_bookstack(arquivo: str, apenas_um: bool = False) -> dict:
     NOME_ESTANTE = "SP156"
@@ -433,4 +414,3 @@ def publicar_no_bookstack(arquivo: str, apenas_um: bool = False) -> dict:
     publicar_pagina_de_atualizacoes(estante_id, eventos_desta_execucao)
     print(f"\n'{NOME_ESTANTE}' concluido: {resultado}")
     return resultado
-

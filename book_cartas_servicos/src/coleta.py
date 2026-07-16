@@ -1,14 +1,4 @@
-
-"""
-Coleta os serviços/informativos do portal SP156.
-
-Três etapas, cada uma com checkpoint próprio pra poder retomar se cair:
-  1) pegar_menu       - Selenium: navega o menu e lista tudo que existe por lá
-  2) varrer_ids       - HTTP simples: testa uma faixa de IDs em paralelo,
-                        pra achar página que não aparece no menu
-  3) completar_dados  - HTTP simples: abre cada página achada e extrai o
-                        conteúdo (campos O QUE É, PRAZO MÁXIMO etc.)
-"""
+import copy
 import json
 import random
 import re
@@ -32,13 +22,8 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-
 URL_MENU = "https://sp156.prefeitura.sp.gov.br/portal/servicos-online"
 URL_INFO = "https://sp156.prefeitura.sp.gov.br/portal/servicos/informacao"
-# User-Agent genérico ("Mozilla/5.0" sozinho) tende a ser reconhecido como bot
-# por proteções tipo Cloudflare/Akamai, que respondem 200 com uma página de
-# desafio em vez do conteúdo real - daí o pipeline "roda" mas extrai nada.
-# Um conjunto de headers mais parecido com navegador real reduz esse risco.
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -49,26 +34,15 @@ HEADERS = {
     "Referer": "https://sp156.prefeitura.sp.gov.br/portal/servicos-online",
 }
 
-
-# =============================================================================
-# JSON em disco - usado pra checkpoint em todas as etapas
-# =============================================================================
-
 def _ler_json(caminho: Path, padrao):
     """Lê um JSON do disco; devolve `padrao` se o arquivo ainda não existe."""
     if not caminho.exists():
         return padrao
     return json.loads(caminho.read_text(encoding="utf-8"))
 
-
 def _salvar_json(caminho: Path, dados) -> None:
     caminho.parent.mkdir(parents=True, exist_ok=True)
     caminho.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-# =============================================================================
-# Filtro de órgão (SMSUB) - decide se um item pertence à secretaria certa
-# =============================================================================
 
 def normalizar_orgao(texto: str) -> str:
     texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
@@ -76,7 +50,6 @@ def normalizar_orgao(texto: str) -> str:
     for caractere in ["-", "–", "(", ")", "/"]:
         texto = texto.replace(caractere, " ")
     return " ".join(texto.split())
-
 
 ORGAOS = [normalizar_orgao(item) for item in [
     "smsub", "sp156", "selimp",
@@ -86,11 +59,9 @@ ORGAOS = [normalizar_orgao(item) for item in [
     "secretaria municipal das subprefeituras – smsub",
 ]]
 
-
 def orgao_e_da_smsub(texto_orgao: str) -> bool:
     texto_normalizado = normalizar_orgao(texto_orgao)
     return bool(texto_normalizado) and any(ancora in texto_normalizado for ancora in ORGAOS)
-
 
 def extrair_classificacao(link: str) -> str:
     """Decide 'servico' ou 'conteudo' (Informativo) pelo parâmetro que
@@ -100,20 +71,6 @@ def extrair_classificacao(link: str) -> str:
     resultado = _tipo_e_codigo_da_url(link)
     return resultado[0] if resultado else "servico"
 
-
-# =============================================================================
-# Extração de campos de uma página de serviço
-# =============================================================================
-
-# IMPORTANTE: o site cola o texto de fontes diferentes (Word/Google Docs) e
-# isso às vezes fragmenta um único título em vários <span> aninhados, tipo
-# <strong><span>ÓRGÃO</span><span> RESPONSÁVEL</span></strong>. Se a gente
-# lesse linha a linha (get_text com separador de quebra de linha, ou o texto
-# de cada tag isolada), isso vira "ÓRGÃO" e "RESPONSÁVEL" em linhas
-# separadas - ou até "ÓRGÃORESPONSÁVEL" grudado, sem espaço - e o título
-# nunca bate. Por isso a extração usa o texto CONTÍNUO do bloco inteiro
-# (separador de espaço) e acha os títulos por posição no texto, não por
-# linha exata.
 CAMPOS = [
     "O QUE É", "QUANDO SOLICITAR", "PÚBLICO-ALVO",
     "REQUISITOS, DOCUMENTOS E INFORMAÇÕES", "PRAZO MÁXIMO",
@@ -124,10 +81,28 @@ CAMPOS = [
     "CRIADO EM", "ATUALIZADO EM",
 ]
 
+MARCADOR_LINK_INICIO = "\u2060"
+MARCADOR_LINK_MEIO = "\u2061"
+MARCADOR_LINK_FIM = "\u2062"
+MARCADOR_PARAGRAFO = "\u2063"
+
+def _preparar_bloco_para_extracao(bloco):
+    bloco = copy.copy(bloco)
+
+    for a in bloco.find_all("a", href=True):
+        texto_link = a.get_text(" ", strip=True)
+        href = a["href"]
+        a.replace_with(f"{MARCADOR_LINK_INICIO}{texto_link}{MARCADOR_LINK_MEIO}{href}{MARCADOR_LINK_FIM}")
+
+    for tag in bloco.find_all(["p", "div", "li", "br"]):
+        tag.insert_after(MARCADOR_PARAGRAFO)
+
+    return bloco
 
 def campos_da_pagina(soup):
     bloco = soup.find("div", id="servicos-texto-holder") or soup
-    texto = re.sub(r"\s+", " ", bloco.get_text(" ", strip=True))
+    bloco_preparado = _preparar_bloco_para_extracao(bloco)
+    texto = re.sub(r"\s+", " ", bloco_preparado.get_text(" ", strip=True))
 
     posicoes = []
     for titulo in CAMPOS:
@@ -140,11 +115,10 @@ def campos_da_pagina(soup):
     for indice, (_, fim_titulo, titulo) in enumerate(posicoes):
         fim_conteudo = posicoes[indice + 1][0] if indice + 1 < len(posicoes) else len(texto)
         conteudo = texto[fim_titulo:fim_conteudo].strip(" :-–.")
-        if titulo not in dados:  # primeira ocorrência vence
+        if titulo not in dados:  
             dados[titulo] = conteudo
 
     return dados
-
 
 def extrair_nome_e_caminho(soup, codigo):
     nome = ""
@@ -171,7 +145,6 @@ def extrair_nome_e_caminho(soup, codigo):
 
     return nome, categoria, grupo, caminho
 
-
 def _tipo_e_codigo_da_url(url: str) -> tuple[str, str] | None:
     parametros = parse_qs(urlparse(url).query)
     if "servico" in parametros:
@@ -179,11 +152,6 @@ def _tipo_e_codigo_da_url(url: str) -> tuple[str, str] | None:
     if "conteudo" in parametros:
         return "conteudo", parametros["conteudo"][0]
     return None
-
-
-# =============================================================================
-# Etapa 1: pegar_menu (Selenium)
-# =============================================================================
 
 def criar_driver():
     options = Options()
@@ -304,20 +272,10 @@ def pegar_menu(saida: str, checkpoint_a_cada_categorias: int = 5) -> int:
     print(f"\nMenu salvo: {len(dados)} registros em {caminho_saida}")
     return len(dados)
 
-
-# =============================================================================
-# Etapa 2: varrer_ids (HTTP simples, em paralelo)
-# =============================================================================
-
 def _criar_sessao_http() -> requests.Session:
     sessao = requests.Session()
     sessao.headers.update(HEADERS)
     adaptador = HTTPAdapter(
-        # 403/429 entraram na lista: o site bloqueia por RATE (muita
-        # requisição rápida), não é um "acesso negado" permanente - um
-        # retry com backoff maior resolve na maioria das vezes. Se fosse
-        # bloqueio definitivo de IP, os 13 itens que passaram nesta mesma
-        # execução também teriam sido bloqueados.
         max_retries=Retry(
             total=5, backoff_factor=3,
             status_forcelist=[403, 429, 500, 502, 503, 504],
@@ -331,12 +289,7 @@ def _criar_sessao_http() -> requests.Session:
 
 
 def _pausa_entre_requisicoes() -> None:
-    """Pequena pausa com variação aleatória antes de cada requisição.
-    Sem isso, N workers em paralelo martelam o site quase ao mesmo tempo
-    e o WAF do site passa a bloquear com 403 em massa - foi exatamente
-    isso que gerou 602/615 páginas bloqueadas numa execução real."""
     time.sleep(random.uniform(0.4, 0.9))
-
 
 def testar_id(sessao: requests.Session, numero_id: int, timeout: int = 10) -> list[dict]:
     encontrados = []
@@ -360,7 +313,6 @@ def testar_id(sessao: requests.Session, numero_id: int, timeout: int = 10) -> li
             print(f"  erro ao testar ID {numero_id} ({tipo}): {erro}")
     return encontrados
 
-
 def _testar_lote_de_ids(ids_do_lote: list[int]) -> list[dict]:
     resultados = []
     sessao = _criar_sessao_http()
@@ -376,19 +328,15 @@ def _testar_lote_de_ids(ids_do_lote: list[int]) -> list[dict]:
         sessao.close()
     return resultados
 
-
 def _carregar_checkpoint_varredura(caminho_checkpoint: Path) -> set:
     return set(_ler_json(caminho_checkpoint, {}).get("mini_lotes_concluidos", []))
-
 
 def _salvar_checkpoint_varredura(caminho_checkpoint: Path, mini_lotes_concluidos: set) -> None:
     _salvar_json(caminho_checkpoint, {"mini_lotes_concluidos": sorted(mini_lotes_concluidos)})
 
-
 def _salvar_achados(achados: list[dict], caminho_saida: Path) -> None:
     achados_ordenados = sorted(achados, key=lambda item: (item["tipo"], int(item["codigo_servico"])))
     _salvar_json(caminho_saida, achados_ordenados)
-
 
 def varrer_ids(
     menu_arq: str, saida: str, id_inicio: int, id_fim: int,
@@ -452,14 +400,8 @@ def varrer_ids(
     print(f"Extras salvos: {len(achados)} em {caminho_saida}")
     return len(achados)
 
-
-# =============================================================================
-# Etapa 3: completar_dados (HTTP simples, em paralelo) -> FILTRO INTEGRADO AQUI
-# =============================================================================
-
 def _salvar_completos(final: dict, caminho_saida: Path) -> None:
     _salvar_json(caminho_saida, dict(sorted(final.items())))
-
 
 def completar_dados(
     menu_arq: str, extras_arq: str, saida: str,
@@ -518,12 +460,7 @@ def completar_dados(
             orgao_bruto = informacoes.get("ÓRGÃO RESPONSÁVEL", "")
             tipo = extrair_classificacao(resposta.url)
 
-            # ---> A MUDANÇA CIRÚRGICA DE ARQUITETURA ACONTECE AQUI:
-            # Filtra e ignora o item na hora se não pertencer aos órgãos válidos
             if not orgao_e_da_smsub(orgao_bruto):
-                # Se nem o container da página de serviço veio E nenhum campo foi
-                # extraído, não é "outro órgão" - é sinal de bloqueio/captcha
-                # (resposta 200 com página de desafio em vez do conteúdo real).
                 if bloco is None and not informacoes:
                     return ("possivel_bloqueio", chave, resposta.status_code, None)
                 return ("ignorado", chave, orgao_bruto, None)
@@ -537,8 +474,6 @@ def completar_dados(
                 caminho_servico = [categoria, grupo]
 
             registro = {
-                # Campos pedidos: categoria, caminho, codigo_servico, link,
-                # tipo, informacoes, html_original, data_extracao.
                 "categoria": categoria, "caminho": caminho, "link": resposta.url,
                 "data_extracao": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
                 "codigo_servico": codigo, "caminho_servico": caminho_servico,
@@ -585,12 +520,6 @@ def completar_dados(
         print(f"AVISO: {contagem_possivel_bloqueio}/{len(pendentes)} páginas vieram sem conteúdo "
               f"reconhecível - forte indício de bloqueio/captcha do site, não de filtro de órgão.")
 
-    # Guarda contra bloqueio silencioso: se processamos várias páginas e
-    # quase nenhuma passou, é muito mais provável que as respostas HTTP
-    # tenham vindo de bloqueio/captcha/rate-limit (403, 200 com página de
-    # desafio) do que quase todos os itens serem de outro órgão. Sem essa
-    # trava, o pipeline "roda com sucesso" e publica quase vazio, do jeito
-    # que aconteceu antes desta mudança (1 de 615 páginas processadas).
     proporcao_bloqueada = contagem_possivel_bloqueio / len(pendentes) if pendentes else 0
     if len(pendentes) >= 20 and (total == 0 or proporcao_bloqueada > 0.5):
         raise RuntimeError(

@@ -1,10 +1,3 @@
-"""
-Backup do banco do BookStack (serviço mariadb-bookstack) via mariadb-dump.
-
-Gera um .sql.gz com timestamp em /opt/airflow/backups (mapeado no
-docker-compose pra ./backups no host) e apaga backups mais antigos que os
-N mais recentes, pra não crescer o disco pra sempre.
-"""
 import os
 import gzip
 import shutil
@@ -17,13 +10,7 @@ HOST_MARIADB = os.environ.get("MARIADB_HOST", "mariadb-bookstack")
 PASTA_BACKUPS_PADRAO = "/opt/airflow/backups"
 MANTER_ULTIMOS_PADRAO = 14  # ~2 semanas de backups diários
 
-
 def _rodar_mariadb_dump(destino_sql: Path) -> None:
-    """
-    Dump remoto via TCP, mesmo usuário/senha root que o serviço
-    mariadb-bookstack já usa (MYSQL_ROOT_PASSWORD, já disponível no
-    ambiente do container Airflow - ver docker-compose.yml).
-    """
     comando = [
         "mariadb-dump",
         f"--host={HOST_MARIADB}",
@@ -41,7 +28,6 @@ def _rodar_mariadb_dump(destino_sql: Path) -> None:
         destino_sql.unlink(missing_ok=True)
         raise RuntimeError(f"mariadb-dump falhou: {resultado.stderr.decode(errors='replace')}")
 
-
 def _comprimir_e_apagar_original(caminho_sql: Path) -> Path:
     caminho_gz = caminho_sql.with_suffix(caminho_sql.suffix + ".gz")
     with open(caminho_sql, "rb") as origem, gzip.open(caminho_gz, "wb") as destino:
@@ -49,18 +35,14 @@ def _comprimir_e_apagar_original(caminho_sql: Path) -> Path:
     caminho_sql.unlink()
     return caminho_gz
 
-
 def _apagar_backups_antigos(pasta: Path, manter_ultimos: int) -> int:
-    """Nome do arquivo tem timestamp no formato YYYYMMDD_HHMMSS, então ordenar por nome já ordena por data."""
     backups = sorted(pasta.glob("bookstack_*.sql.gz"), key=lambda p: p.name, reverse=True)
     antigos = backups[manter_ultimos:]
     for arquivo in antigos:
         arquivo.unlink()
     return len(antigos)
 
-
 def fazer_backup(pasta_destino: str = PASTA_BACKUPS_PADRAO, manter_ultimos: int = MANTER_ULTIMOS_PADRAO) -> str:
-    """Dump completo do banco do BookStack, comprimido e com rotação. Devolve o caminho do arquivo gerado."""
     pasta = Path(pasta_destino)
     pasta.mkdir(parents=True, exist_ok=True)
 

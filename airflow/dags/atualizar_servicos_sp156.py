@@ -1,21 +1,6 @@
-"""
-DAG que roda o pipeline completo do SP156: permissões -> menu -> varredura
-de IDs extras -> extração de conteúdo -> publicação no BookStack -> backup
-mensal. Cada etapa é uma task separada, encadeada em sequência (uma runa
-só, sem paralelismo entre elas).
-
-Por que a varredura de IDs extras (etapa 3) continua existindo:
-o controle de hash (etapa 5) só compara conteúdo de páginas que o pipeline
-já conhece. Ele não descobre páginas que nunca apareceram no menu (link
-"órfão", sem entrada na navegação). A única forma de achar essas páginas é
-testar a faixa de IDs diretamente - não dá pra substituir isso por
-comparação de datas.
-"""
 from datetime import datetime, timedelta
-
 from airflow.sdk import dag, task, get_current_context, Variable
 from airflow.providers.standard.operators.bash import BashOperator
-
 from src.coleta import pegar_menu, varrer_ids, completar_dados
 from src.bookstack_publicacao import publicar_no_bookstack
 from src.hash_bookstack import garantir_tabela
@@ -28,11 +13,8 @@ ARQ_MENU = f"{PASTA_DADOS}/menu_links.json"
 ARQ_IDS_EXTRAS = f"{PASTA_DADOS}/ids_encontrados.json"
 ARQ_DADOS_COMPLETOS = f"{PASTA_DADOS}/dados_completos.json"
 
-
 def _var_int(nome: str, padrao: int) -> int:
-    """Atalho pra ler uma Airflow Variable como inteiro, com valor padrão."""
     return int(Variable.get(nome, default=padrao))
-
 
 @dag(
     dag_id="atualizar_servicos_sp156",
@@ -67,11 +49,6 @@ def fluxo_atualizar_servicos():
     def coletar_menu():
         quantidade = pegar_menu(saida=ARQ_MENU)
         print(f"Total de registros coletados no menu: {quantidade}")
-
-        # Guarda contra coleta quebrada: se o site mudou de estrutura (os
-        # seletores de HTML pararam de bater) ou a coleta parou pela
-        # metade, o número de itens despenca - melhor falhar a DAG aqui
-        # do que publicar um BookStack incompleto.
         minimo_esperado = _var_int("sp156_menu_minimo_esperado", 0)
         if minimo_esperado and quantidade < minimo_esperado:
             raise ValueError(
@@ -116,14 +93,6 @@ def fluxo_atualizar_servicos():
 
     @task
     def backup_bookstack_task():
-        # Roda por último, depois da publicação: assim o backup já sai com o
-        # conteúdo mais recente. Falhar aqui não deve mascarar uma publicação
-        # que já deu certo, então esta task fica isolada das anteriores.
-        #
-        # Backup é mensal (não a cada execução da DAG): guardamos o
-        # "YYYY-MM" do último backup numa Airflow Variable e só rodamos de
-        # novo se o mês mudou. Simples e sobrevive a DAG rodando mais de
-        # uma vez no mesmo mês.
         mes_atual = datetime.now().strftime("%Y-%m")
         ultimo_backup = Variable.get("sp156_backup_ultimo_mes", default=None)
         if ultimo_backup == mes_atual:
