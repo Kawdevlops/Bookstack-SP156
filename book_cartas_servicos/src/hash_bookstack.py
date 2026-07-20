@@ -4,15 +4,23 @@ import hashlib
 import psycopg2
 import psycopg2.extras
 
+
+# Parte 1 - cálculo do hash
+
 def normalizar_para_hash(texto: str) -> str:
     return re.sub(r"\s+", " ", texto or "").strip()
 
+
 def calcular_hash(texto: str) -> str:
+    """Devolve o SHA-256 (hexadecimal) de um texto já normalizado."""
     return hashlib.sha256(texto.encode("utf-8")).hexdigest()
 
 
 def hash_de_conteudo(texto_bruto: str) -> str:
+    """Atalho: normaliza e calcula o hash em um passo só."""
     return calcular_hash(normalizar_para_hash(texto_bruto))
+
+# Parte 2 - conexão com o Postgres
 
 def _conectar():
     return psycopg2.connect(
@@ -22,6 +30,7 @@ def _conectar():
         user=os.environ["POSTGRES_USER"],
         password=os.environ["POSTGRES_PASSWORD"],
     )
+
 
 def _executar(comando: str, parametros: tuple = (), *, buscar_um: bool = False, buscar_todos: bool = False):
     usa_dict = buscar_um or buscar_todos
@@ -34,6 +43,7 @@ def _executar(comando: str, parametros: tuple = (), *, buscar_um: bool = False, 
             if buscar_todos:
                 return [dict(linha) for linha in cursor.fetchall()]
     return None
+
 
 def garantir_tabela() -> None:
     _executar("""
@@ -87,6 +97,7 @@ def marcar_conflito(tipo: str, codigo_servico: str) -> None:
         (tipo, codigo_servico),
     )
 
+
 def listar_conflitos() -> list[dict]:
     return _executar(
         """
@@ -96,31 +107,73 @@ def listar_conflitos() -> list[dict]:
         buscar_todos=True,
     )
 
+# Parte 3 - a decisão (função pura, sem I/O)
+
 ACAO_CRIAR = "CRIAR"
 ACAO_ATUALIZAR = "ATUALIZAR"
 ACAO_PULAR = "PULAR"
 ACAO_CONFLITO = "CONFLITO"
 
+
 def decidir_acao(
     hash_fonte_novo: str, salvo: dict | None,
     hash_atual_no_bookstack: str | None, pagina_existe: bool = True,
 ) -> str:
-    """
-    CRIAR      - nunca vimos essa página antes, OU tínhamos um registro
-                 dela mas a página não existe mais no BookStack de
-                 verdade (apagada, ou o BookStack foi resetado sem
-                 resetar esta tabela de hash) - sem checar isso, o robô
-                 "lembra" de uma página fantasma e pula pra sempre,
-                 achando que já publicou.
-    PULAR      - a fonte não mudou desde a última execução E a página
-                 ainda existe de verdade no BookStack.
-    CONFLITO   - alguém editou a página no BookStack por fora do robô
-    ATUALIZAR  - a fonte mudou e o BookStack ainda está como o robô deixou
-    """
+
     if salvo is None or not pagina_existe:
         return ACAO_CRIAR
+    editado_manualmente = (
+        hash_atual_no_bookstack is not None
+        and hash_atual_no_bookstack != salvo["hash_publicado"]
+    )
+    if editado_manualmente:
+        return ACAO_CONFLITO
+
     if hash_fonte_novo == salvo["hash_fonte"]:
         return ACAO_PULAR
-    if hash_atual_no_bookstack is not None and hash_atual_no_bookstack != salvo["hash_publicado"]:
-        return ACAO_CONFLITO
     return ACAO_ATUALIZAR
+
+# Parte 4 - migração pontual (rodar uma vez só)
+
+def recalibrar_todas_hash_publicado() -> None:
+    """
+    Corrige o hash_publicado de todas as páginas já salvas em pagina_hash,
+    recalculando a partir do HTML que o BookStack REALMENTE guarda (via
+    GET), não do que foi mandado na hora de publicar - motivo: o
+    BookStack reprocessa o HTML ao salvar, então o hash do que mandamos
+    nunca batia com uma leitura futura, mesmo sem edição manual nenhuma.
+
+    Import tardio (dentro da função, não no topo do arquivo): evita
+    dependência circular, já que bookstack_publicacao.py importa DESTE
+    arquivo - se este arquivo importasse de volta lá no topo, os dois
+    tentariam carregar um ao outro ao mesmo tempo e o Python travaria.
+    """
+    from src.bookstack_publicacao import _obter_pagina_por_id
+
+    linhas = _executar(
+        "SELECT tipo, codigo_servico, bookstack_page_id FROM pagina_hash "
+        "WHERE bookstack_page_id IS NOT NULL;",
+        buscar_todos=True,
+    )
+    print(f"Recalibrando {len(linhas)} paginas...")
+
+    atualizadas, sem_pagina = 0, 0
+    for linha in linhas:
+        pagina = _obter_pagina_por_id(linha["bookstack_page_id"])
+        if pagina is None:
+            print(f"  aviso: pagina {linha['bookstack_page_id']} "
+                  f"({linha['tipo']}:{linha['codigo_servico']}) nao encontrada no BookStack - pulando")
+            sem_pagina += 1
+            continue
+
+        hash_real = hash_de_conteudo(pagina.get("html", ""))
+        _executar(
+            "UPDATE pagina_hash SET hash_publicado = %s, em_conflito = FALSE, "
+            "verificado_em = now() WHERE tipo = %s AND codigo_servico = %s;",
+            (hash_real, linha["tipo"], linha["codigo_servico"]),
+        )
+        atualizadas += 1
+        if atualizadas % 50 == 0:
+            print(f"  {atualizadas}/{len(linhas)} recalibradas...")
+
+    print(f"\nConcluido: {atualizadas} recalibradas, {sem_pagina} sem pagina no BookStack.")

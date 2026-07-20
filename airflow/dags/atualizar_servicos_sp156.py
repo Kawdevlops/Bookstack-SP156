@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
-from airflow.sdk import dag, task, get_current_context, Variable
+from airflow.sdk import dag, task, Variable
 from airflow.providers.standard.operators.bash import BashOperator
-from src.coleta import pegar_menu, varrer_ids, completar_dados
+from src.coleta import pegar_menu, completar_dados
 from src.bookstack_publicacao import publicar_no_bookstack
 from src.hash_bookstack import garantir_tabela
 from src.backup_bookstack import fazer_backup
@@ -13,15 +13,18 @@ ARQ_MENU = f"{PASTA_DADOS}/menu_links.json"
 ARQ_IDS_EXTRAS = f"{PASTA_DADOS}/ids_encontrados.json"
 ARQ_DADOS_COMPLETOS = f"{PASTA_DADOS}/dados_completos.json"
 
+
 def _var_int(nome: str, padrao: int) -> int:
+    """Atalho pra ler uma Airflow Variable como inteiro, com valor padrão."""
     return int(Variable.get(nome, default=padrao))
+
 
 @dag(
     dag_id="atualizar_servicos_sp156",
     description=(
-        "Coleta o menu e a faixa de IDs 700-7000 do SP156, extrai o "
-        "conteúdo completo e publica tudo no BookStack (serviços e "
-        "informativos juntos, rotulados por tipo)."
+        "Coleta o menu do SP156, filtra pelo órgão (SMSUB) e publica "
+        "tudo no BookStack (serviços e informativos juntos, rotulados "
+        "por tipo)."
     ),
     start_date=datetime(2026, 1, 1),
     schedule=None,
@@ -29,7 +32,6 @@ def _var_int(nome: str, padrao: int) -> int:
     tags=["sp156", "bookstack", "coleta"],
     max_active_runs=1,
     default_args=DEFAULT_ARGS,
-    params={"forcar_varredura_completa": False},
 )
 def fluxo_atualizar_servicos():
 
@@ -59,22 +61,6 @@ def fluxo_atualizar_servicos():
         return quantidade
 
     @task
-    def buscar_ids_extras():
-        forcar_varredura_completa = bool(get_current_context()["params"]["forcar_varredura_completa"])
-        quantidade = varrer_ids(
-            menu_arq=ARQ_MENU,
-            saida=ARQ_IDS_EXTRAS,
-            id_inicio=_var_int("sp156_id_inicio", 700),
-            id_fim=_var_int("sp156_id_fim", 7000),
-            workers=_var_int("sp156_varredura_workers", 4),
-            tamanho_mini_lote=100,
-            forcar_varredura_completa=forcar_varredura_completa,
-        )
-        print(f"Modo de varredura: {'completa' if forcar_varredura_completa else 'retomada por checkpoint'}")
-        print(f"Total de extras encontrados nesta execução: {quantidade}")
-        return quantidade
-
-    @task
     def extrair_dados_completos():
         quantidade = completar_dados(
             menu_arq=ARQ_MENU,
@@ -82,7 +68,6 @@ def fluxo_atualizar_servicos():
             saida=ARQ_DADOS_COMPLETOS,
             limite=None,
             checkpoint_a_cada=100,
-            workers=_var_int("sp156_completar_dados_workers", 4),
         )
         print(f"Total de registros completos: {quantidade}")
         return quantidade
@@ -106,12 +91,11 @@ def fluxo_atualizar_servicos():
 
     tabela = preparar_tabela_hash()
     menu = coletar_menu()
-    extras = buscar_ids_extras()
     completos = extrair_dados_completos()
     publicar = publicar_no_bookstack_task()
     backup = backup_bookstack_task()
 
-    ajustar_permissoes >> tabela >> menu >> extras >> completos >> publicar >> backup
+    ajustar_permissoes >> tabela >> menu >> completos >> publicar >> backup
 
 
 fluxo_atualizar_servicos()

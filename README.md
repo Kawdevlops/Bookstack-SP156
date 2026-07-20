@@ -11,7 +11,7 @@ Coleta os serviços/informativos do portal SP156 (SMSUB/SELIMP) e publica tudo a
 [Certificados HTTPS (porta 443)](#certificados-https-porta-443)
 [Resetar o ambiente](#resetar-o-ambiente)
 [Estrutura](#estrutura)
-[Configuração visual do bookstack](#configuração-visual-do-bookstack)
+[Configuração visual do bookstack](css_bookstack.md)
 [Guia de Lógica do Código — SP156 → BookStack](#guia-logica)
 > [1. coleta.py](#1-coletapy)
 > [2. hash_bookstack.py](#2-hash_bookstackpy)
@@ -47,8 +47,6 @@ pra confirmar)
 | `AIRFLOW_JWT_SECRET` | `python3 -c "import secrets; print(secrets.token_hex(32))"` | **Gere de novo**, não reaproveite o valor acima. |
 | `BOOKSTACK_APP_KEY` | `python3 -c "import secrets, base64; print('base64:' + base64.b64encode(secrets.token_bytes(32)).decode())"` | |
 | `MYSQL_ROOT_PASSWORD` | `python3 -c "import secrets; print(secrets.token_urlsafe(24))"` | |
-| `MYSQL_USER` / `MYSQL_PASSWORD` | `python3 -c "import secrets; print(secrets.token_urlsafe(24))"` | Escolha um usuário (ex: `bookstack`) e gere uma senha. |
-| `DB_USERNAME` / `DB_PASSWORD` | Usar os mesmos valores definidos para o MySQL. | **Precisam ser idênticos** a `MYSQL_USER` / `MYSQL_PASSWORD` — é a mesma credencial vista pelo BookStack. |
 
 
   

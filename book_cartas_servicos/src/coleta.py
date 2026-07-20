@@ -4,7 +4,6 @@ import random
 import re
 import time
 import tempfile
-import threading
 import unicodedata
 import requests
 from requests.adapters import HTTPAdapter
@@ -22,6 +21,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+
 URL_MENU = "https://sp156.prefeitura.sp.gov.br/portal/servicos-online"
 URL_INFO = "https://sp156.prefeitura.sp.gov.br/portal/servicos/informacao"
 HEADERS = {
@@ -31,8 +31,20 @@ HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
     "Referer": "https://sp156.prefeitura.sp.gov.br/portal/servicos-online",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+    "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
 }
+
+# JSON em disco - usado pra checkpoint em todas as etapas
 
 def _ler_json(caminho: Path, padrao):
     """Lê um JSON do disco; devolve `padrao` se o arquivo ainda não existe."""
@@ -40,9 +52,13 @@ def _ler_json(caminho: Path, padrao):
         return padrao
     return json.loads(caminho.read_text(encoding="utf-8"))
 
+
 def _salvar_json(caminho: Path, dados) -> None:
     caminho.parent.mkdir(parents=True, exist_ok=True)
     caminho.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+# Filtro de órgão (SMSUB) - decide se um item pertence à secretaria certa
 
 def normalizar_orgao(texto: str) -> str:
     texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
@@ -50,6 +66,7 @@ def normalizar_orgao(texto: str) -> str:
     for caractere in ["-", "–", "(", ")", "/"]:
         texto = texto.replace(caractere, " ")
     return " ".join(texto.split())
+
 
 ORGAOS = [normalizar_orgao(item) for item in [
     "smsub", "sp156", "selimp",
@@ -63,13 +80,12 @@ def orgao_e_da_smsub(texto_orgao: str) -> bool:
     texto_normalizado = normalizar_orgao(texto_orgao)
     return bool(texto_normalizado) and any(ancora in texto_normalizado for ancora in ORGAOS)
 
+
 def extrair_classificacao(link: str) -> str:
-    """Decide 'servico' ou 'conteudo' (Informativo) pelo parâmetro que
-    aparece na URL final da página (depois de qualquer redirecionamento) -
-    é o dado mais confiável que temos: 'conteudo=' no link é informativo,
-    qualquer outra coisa é serviço."""
     resultado = _tipo_e_codigo_da_url(link)
     return resultado[0] if resultado else "servico"
+
+# Extração de campos de uma página de serviço
 
 CAMPOS = [
     "O QUE É", "QUANDO SOLICITAR", "PÚBLICO-ALVO",
@@ -85,6 +101,7 @@ MARCADOR_LINK_INICIO = "\u2060"
 MARCADOR_LINK_MEIO = "\u2061"
 MARCADOR_LINK_FIM = "\u2062"
 MARCADOR_PARAGRAFO = "\u2063"
+
 
 def _preparar_bloco_para_extracao(bloco):
     bloco = copy.copy(bloco)
@@ -152,6 +169,8 @@ def _tipo_e_codigo_da_url(url: str) -> tuple[str, str] | None:
     if "conteudo" in parametros:
         return "conteudo", parametros["conteudo"][0]
     return None
+
+# Etapa 1: pegar_menu (Selenium)
 
 def criar_driver():
     options = Options()
@@ -272,12 +291,15 @@ def pegar_menu(saida: str, checkpoint_a_cada_categorias: int = 5) -> int:
     print(f"\nMenu salvo: {len(dados)} registros em {caminho_saida}")
     return len(dados)
 
-def _criar_sessao_http() -> requests.Session:
+
+# Etapa 2: varrer_ids (HTTP simples, em paralelo)
+
+def _criar_sessao_http(total_tentativas: int = 5, espera_base: float = 3) -> requests.Session:
     sessao = requests.Session()
     sessao.headers.update(HEADERS)
     adaptador = HTTPAdapter(
         max_retries=Retry(
-            total=5, backoff_factor=3,
+            total=total_tentativas, backoff_factor=espera_base,
             status_forcelist=[403, 429, 500, 502, 503, 504],
             allowed_methods=["GET"], respect_retry_after_header=True,
         ),
@@ -285,14 +307,20 @@ def _criar_sessao_http() -> requests.Session:
     )
     sessao.mount("https://", adaptador)
     sessao.mount("http://", adaptador)
-    return sessao
 
+    try:
+        sessao.get(URL_MENU, timeout=10)
+    except requests.RequestException:
+        pass
+
+    return sessao
 
 def _pausa_entre_requisicoes() -> None:
     time.sleep(random.uniform(0.4, 0.9))
 
-def testar_id(sessao: requests.Session, numero_id: int, timeout: int = 10) -> list[dict]:
+def testar_id(sessao: requests.Session, numero_id: int, timeout: int = 10) -> tuple[list[dict], bool]:
     encontrados = []
+    houve_erro_de_rede = False
     for tipo in ["servico", "conteudo"]:
         url = f"{URL_INFO}?{tipo}={numero_id}"
         try:
@@ -302,41 +330,78 @@ def testar_id(sessao: requests.Session, numero_id: int, timeout: int = 10) -> li
                 continue
 
             soup = BS(resposta.text, "html.parser")
-            if not soup.find("div", id="servicos-texto-holder"):
+            bloco = soup.find("div", id="servicos-texto-holder")
+            if not bloco:
                 continue
 
-            resultado = _tipo_e_codigo_da_url(resposta.url)
-            tipo_real, codigo_real = resultado if resultado else (tipo, str(numero_id))
-            encontrados.append({"tipo": tipo_real, "codigo_servico": str(codigo_real), "link": resposta.url})
+            informacoes = campos_da_pagina(soup)
+            orgao_bruto = informacoes.get("ÓRGÃO RESPONSÁVEL", "")
+            if not orgao_e_da_smsub(orgao_bruto):
+                continue  
+
+            tipo_real = extrair_classificacao(resposta.url)
+            resultado_url = _tipo_e_codigo_da_url(resposta.url)
+            codigo_real = resultado_url[1] if resultado_url else str(numero_id)
+            nome, categoria, grupo, caminho = extrair_nome_e_caminho(soup, codigo_real)
+
+            encontrados.append({
+                "categoria": categoria, "caminho": caminho, "link": resposta.url,
+                "data_extracao": (datetime.now() - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M:%S"),
+                "codigo_servico": codigo_real, "caminho_servico": [categoria, grupo],
+                "nome": nome, "tipo": tipo_real, "informacoes": informacoes,
+                "html_original": str(bloco) if bloco else "",
+            })
 
         except requests.RequestException as erro:
             print(f"  erro ao testar ID {numero_id} ({tipo}): {erro}")
-    return encontrados
+            houve_erro_de_rede = True
+    return encontrados, houve_erro_de_rede
 
-def _testar_lote_de_ids(ids_do_lote: list[int]) -> list[dict]:
+
+def _testar_lote_de_ids(ids_do_lote: list[int]) -> tuple[list[dict], bool]:
     resultados = []
-    sessao = _criar_sessao_http()
+    houve_erro_no_lote = False
+    erros_consecutivos = 0
+    sessao = _criar_sessao_http(total_tentativas=0, espera_base=0)
     try:
         for indice, numero_id in enumerate(ids_do_lote, start=1):
             try:
-                resultados.extend(testar_id(sessao, numero_id))
+                encontrados, houve_erro = testar_id(sessao, numero_id)
+                resultados.extend(encontrados)
+                houve_erro_no_lote = houve_erro_no_lote or houve_erro
+
+                if houve_erro:
+                    erros_consecutivos += 1
+                else:
+                    erros_consecutivos = 0
+
+                if erros_consecutivos >= 3:
+                    print(f"  3 erros seguidos - pausando este lote por 60s antes de desistir dele.")
+                    time.sleep(60)
+                    houve_erro_no_lote = True
+                    break
             except Exception as erro:
                 print(f"  falha ao testar ID {numero_id}: {erro}")
+                houve_erro_no_lote = True
             if indice % 20 == 0:
                 print(f"  progresso do lote: {indice}/{len(ids_do_lote)} IDs testados")
     finally:
         sessao.close()
-    return resultados
+    return resultados, houve_erro_no_lote
+
 
 def _carregar_checkpoint_varredura(caminho_checkpoint: Path) -> set:
     return set(_ler_json(caminho_checkpoint, {}).get("mini_lotes_concluidos", []))
 
+
 def _salvar_checkpoint_varredura(caminho_checkpoint: Path, mini_lotes_concluidos: set) -> None:
     _salvar_json(caminho_checkpoint, {"mini_lotes_concluidos": sorted(mini_lotes_concluidos)})
+
 
 def _salvar_achados(achados: list[dict], caminho_saida: Path) -> None:
     achados_ordenados = sorted(achados, key=lambda item: (item["tipo"], int(item["codigo_servico"])))
     _salvar_json(caminho_saida, achados_ordenados)
+
 
 def varrer_ids(
     menu_arq: str, saida: str, id_inicio: int, id_fim: int,
@@ -378,10 +443,14 @@ def varrer_ids(
         for futuro in as_completed(tarefas):
             indice_mini_lote = tarefas[futuro]
             try:
-                resultados = futuro.result()
+                resultados, houve_erro_no_lote = futuro.result()
             except Exception as erro:
                 print(f"Mini-lote {indice_mini_lote} falhou: {erro}")
                 resultados = []
+                houve_erro_no_lote = True
+
+            if houve_erro_no_lote:
+                print(f"Mini-lote {indice_mini_lote} teve erro de rede em algum ID - será testado de novo na próxima execução.")
             else:
                 mini_lotes_concluidos.add(indice_mini_lote)
 
@@ -400,12 +469,16 @@ def varrer_ids(
     print(f"Extras salvos: {len(achados)} em {caminho_saida}")
     return len(achados)
 
+# Etapa 3: completar_dados (HTTP simples, em paralelo) -> FILTRO INTEGRADO AQUI
+
+
 def _salvar_completos(final: dict, caminho_saida: Path) -> None:
     _salvar_json(caminho_saida, dict(sorted(final.items())))
 
+
 def completar_dados(
     menu_arq: str, extras_arq: str, saida: str,
-    limite: int | None = None, checkpoint_a_cada: int = 100, workers: int = 10,
+    limite: int | None = None, checkpoint_a_cada: int = 100,
 ) -> int:
     caminho_menu = Path(menu_arq)
     caminho_extras = Path(extras_arq)
@@ -424,7 +497,8 @@ def completar_dados(
                 vistos.add(f"{item['tipo']}:{item['codigo_servico']}")
         print(f"Checkpoint encontrado: {len(vistos)} páginas já processadas anteriormente.")
 
-    pendentes = []
+    pendentes = []   
+    ja_prontos = []  
     for item in entrada:
         tipo = str(item.get("tipo", "servico")).strip()
         codigo = str(item.get("codigo_servico") or item.get("id", "")).strip()
@@ -434,26 +508,32 @@ def completar_dados(
         if chave in vistos:
             continue
         vistos.add(chave)
-        pendentes.append(item)
 
-    print(f"Processando {len(pendentes)} páginas novas (de {len(entrada)} no total), {workers} em paralelo...")
+        if "informacoes" in item:
+            ja_prontos.append(item)
+        else:
+            pendentes.append(item)
 
-    sessao_local = threading.local()
+    for registro in ja_prontos:
+        final[registro["categoria"]].append(registro)
+    if ja_prontos:
+        print(f"{len(ja_prontos)} páginas já vieram prontas da varredura (sem reabrir).")
 
-    def _obter_sessao() -> requests.Session:
-        if not hasattr(sessao_local, "sessao"):
-            sessao_local.sessao = _criar_sessao_http()
-        return sessao_local.sessao
+    print(f"Processando {len(pendentes)} páginas novas (de {len(entrada)} no total), uma de cada vez...")
+    sessao = _criar_sessao_http()
+    processados = 0
+    contagem_possivel_bloqueio = 0
 
-    def _processar_item(item: dict):
+    for item in pendentes:
         tipo = str(item.get("tipo", "servico")).strip()
         codigo = str(item.get("codigo_servico") or item.get("id", "")).strip()
         chave = f"{tipo}:{codigo}"
         link = item.get("link") or item.get("url") or f"{URL_INFO}?{tipo}={codigo}"
+        processados += 1
 
         try:
             _pausa_entre_requisicoes()
-            resposta = _obter_sessao().get(link, timeout=15, allow_redirects=True)
+            resposta = sessao.get(link, timeout=20, allow_redirects=True)
             soup = BS(resposta.text, "html.parser")
             bloco = soup.find("div", id="servicos-texto-holder")
             informacoes = campos_da_pagina(soup)
@@ -462,8 +542,12 @@ def completar_dados(
 
             if not orgao_e_da_smsub(orgao_bruto):
                 if bloco is None and not informacoes:
-                    return ("possivel_bloqueio", chave, resposta.status_code, None)
-                return ("ignorado", chave, orgao_bruto, None)
+                    contagem_possivel_bloqueio += 1
+                    print(f"[{processados}/{len(pendentes)}] {chave} SEM CONTEÚDO ({resposta.status_code}) — "
+                          f"possível bloqueio/captcha do site, não filtro de órgão")
+                else:
+                    print(f"[{processados}/{len(pendentes)}] {chave} ignorado — órgão: {orgao_bruto or 'não encontrado'}")
+                continue
 
             if item.get("nome") and item.get("categoria") and item.get("grupo"):
                 nome, categoria, grupo = item["nome"], item["categoria"], item["grupo"]
@@ -475,43 +559,21 @@ def completar_dados(
 
             registro = {
                 "categoria": categoria, "caminho": caminho, "link": resposta.url,
-                "data_extracao": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+                "data_extracao": (datetime.now() - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M:%S"),
                 "codigo_servico": codigo, "caminho_servico": caminho_servico,
                 "nome": nome, "tipo": tipo, "informacoes": informacoes,
                 "html_original": str(bloco) if bloco else "",
             }
-            return ("ok", chave, categoria, registro)
+            final[categoria].append(registro)
+            print(f"[{processados}/{len(pendentes)}] {chave} OK — {categoria} › {nome}")
 
         except requests.RequestException as erro:
-            return ("erro_requisicao", chave, str(erro), None)
+            print(f"[{processados}/{len(pendentes)}] {chave} ERRO de requisição: {erro}")
         except Exception as erro:
-            return ("erro", chave, str(erro), None)
+            print(f"[{processados}/{len(pendentes)}] {chave} ERRO: {erro}")
 
-    processados = 0
-    contagem_possivel_bloqueio = 0
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        tarefas = {executor.submit(_processar_item, item): item for item in pendentes}
-
-        for futuro in as_completed(tarefas):
-            processados += 1
-            status, chave, extra, registro = futuro.result()
-
-            if status == "ok":
-                final[extra].append(registro)
-                print(f"[{processados}/{len(pendentes)}] {chave} OK — {extra} › {registro['nome']}")
-            elif status == "ignorado":
-                print(f"[{processados}/{len(pendentes)}] {chave} ignorado — órgão: {extra or 'não encontrado'}")
-            elif status == "possivel_bloqueio":
-                contagem_possivel_bloqueio += 1
-                print(f"[{processados}/{len(pendentes)}] {chave} SEM CONTEÚDO (status {extra}) — "
-                      f"possível bloqueio/captcha do site, não filtro de órgão")
-            elif status == "erro_requisicao":
-                print(f"[{processados}/{len(pendentes)}] {chave} ERRO de requisição: {extra}")
-            else:
-                print(f"[{processados}/{len(pendentes)}] {chave} ERRO: {extra}")
-
-            if processados % checkpoint_a_cada == 0:
-                _salvar_completos(final, caminho_saida)
+        if processados % checkpoint_a_cada == 0:
+            _salvar_completos(final, caminho_saida)
 
     _salvar_completos(final, caminho_saida)
     total = sum(len(itens) for itens in final.values())
@@ -526,7 +588,6 @@ def completar_dados(
             f"completar_dados processou {len(pendentes)} páginas e só {total} passaram no filtro "
             f"de órgão (SMSUB) - {contagem_possivel_bloqueio} delas ({proporcao_bloqueada:.0%}) sem "
             f"conteúdo reconhecível. O mais provável é bloqueio/captcha/rate-limit do site, não que "
-            f"quase todos os itens sejam de outro órgão. Reduza os workers (Variable "
-            f"sp156_completar_dados_workers) e tente de novo antes de investigar o filtro."
+            f"quase todos os itens sejam de outro órgão."
         )
     return total
