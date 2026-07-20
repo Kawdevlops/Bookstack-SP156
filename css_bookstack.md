@@ -1,5 +1,9 @@
 Caso queiram personalizar o bookstack
 
+Em Custumização: Mude o nome para -> BookStack - SP156 -> Role para baixo: Página inicial selecione "Estante"
+
+E cole o css completo no -> Conteúdo customizado para <heade> HTML
+
 <style>
 
 body, .page-content, .book-content, .chapter-content, .shelves-list {

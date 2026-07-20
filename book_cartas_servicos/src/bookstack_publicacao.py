@@ -160,11 +160,6 @@ _PADRAO_LINK_MARCADO = re.compile(
 
 
 def _linkificar(pedaco: str) -> str:
-    """
-    Escapa o texto normal (contra HTML acidental) e troca cada marcador de
-    link por um <a> de verdade. Feito manualmente (não com um único
-    html.escape + replace) pra não escapar o texto que já virou <a>.
-    """
     resultado = []
     posicao = 0
     for m in _PADRAO_LINK_MARCADO.finditer(pedaco):
@@ -178,13 +173,6 @@ def _linkificar(pedaco: str) -> str:
 
 
 def texto_de_campo_para_html(texto_campo: str) -> str:
-    """
-    Recebe o valor de um campo (ainda com os marcadores de link/parágrafo
-    vindos de coleta.py) e devolve HTML pronto: cada trecho marcado como
-    parágrafo vira um <p> separado, e cada link marcado vira um <a>
-    clicável de verdade - antes disso, tudo virava um único <p> de texto
-    escapado, sem parágrafo nem link.
-    """
     partes = [p.strip() for p in texto_campo.split(MARCADOR_PARAGRAFO)]
     partes = [p for p in partes if p]
     if not partes:
@@ -255,9 +243,13 @@ def _resolver_conflito_marcado(
         salvar_hashes(tipo, codigo_servico, hash_fonte_novo, hash_publicado_atual, pagina_id, em_conflito=False)
         return STATUS_APROVADA
 
-    pagina_id = criar_atualizar(pagina_id, capitulo_id, livro_id, nome, html_pagina, tipo, codigo_servico)
-    hash_novo = hash_de_conteudo(html_pagina)
-    salvar_hashes(tipo, codigo_servico, hash_novo, hash_novo, pagina_id, em_conflito=False)
+    # AQUI ESTÁ A CORREÇÃO: criar_atualizar devolve (id, html_salvo) agora,
+    # e é o html_salvo (o que o BookStack realmente guardou) que vira o
+    # hash_publicado - não o html_pagina que a gente mandou.
+    pagina_id, html_salvo = criar_atualizar(pagina_id, capitulo_id, livro_id, nome, html_pagina, tipo, codigo_servico)
+    hash_fonte_novo = hash_de_conteudo(html_pagina)
+    hash_publicado_real = hash_de_conteudo(html_salvo)
+    salvar_hashes(tipo, codigo_servico, hash_fonte_novo, hash_publicado_real, pagina_id, em_conflito=False)
     return STATUS_REJEITADA
 
 
@@ -270,7 +262,16 @@ def decidir_acao(
 
 
 def criar_atualizar(pagina_id: int | None, capitulo_id: int, livro_id: int,
-                     nome: str, html_pagina: str, tipo: str, codigo_servico: str) -> int:
+                     nome: str, html_pagina: str, tipo: str, codigo_servico: str) -> tuple[int, str]:
+    """
+    Devolve (id_da_pagina, html_realmente_salvo).
+
+    O segundo valor é a correção do bug confirmado com dado real: o
+    BookStack reprocessa o HTML ao salvar (sanitiza, reformata) - o que
+    ele guarda de verdade não é igual ao que a gente manda. Buscando de
+    volta (GET) e hasheando o que o BookStack de fato armazenou, a
+    comparação futura fica "BookStack contra BookStack" - consistente.
+    """
     tags = [
         {"name": "sp156_tipo", "value": tipo},
         {"name": "sp156_codigo_servico", "value": codigo_servico},
@@ -280,10 +281,14 @@ def criar_atualizar(pagina_id: int | None, capitulo_id: int, livro_id: int,
                                     "name": nome, "html": html_pagina, "tags": tags})
         if resposta.status_code not in (200, 201):
             raise RuntimeError(f"Erro ao criar pagina '{nome}': {resposta.text}")
-        return resposta.json()["id"]
+        novo_id = resposta.json()["id"]
+    else:
+        _put(f"pages/{pagina_id}", {"name": nome, "html": html_pagina, "tags": tags})
+        novo_id = pagina_id
 
-    _put(f"pages/{pagina_id}", {"name": nome, "html": html_pagina, "tags": tags})
-    return pagina_id
+    pagina_salva = _obter_pagina_por_id(novo_id)
+    html_realmente_salvo = pagina_salva.get("html", "") if pagina_salva else html_pagina
+    return novo_id, html_realmente_salvo
 
 
 def publicar_pagina(servico: dict, capitulo_nome: str, capitulo_id: int, livro_id: int) -> str:
@@ -310,8 +315,10 @@ def publicar_pagina(servico: dict, capitulo_nome: str, capitulo_id: int, livro_i
         marcar_conflito(tipo, codigo_servico)
         return STATUS_CONFLITO
 
-    pagina_id = criar_atualizar(pagina_id, capitulo_id, livro_id, nome, html_pagina, tipo, codigo_servico)
-    salvar_hashes(tipo, codigo_servico, hash_novo, hash_novo, pagina_id)
+    # AQUI TAMBÉM: pega o html_salvo de volta e hasheia ELE, não o que mandamos.
+    pagina_id, html_salvo = criar_atualizar(pagina_id, capitulo_id, livro_id, nome, html_pagina, tipo, codigo_servico)
+    hash_publicado_real = hash_de_conteudo(html_salvo)
+    salvar_hashes(tipo, codigo_servico, hash_novo, hash_publicado_real, pagina_id)
     return STATUS_CRIADA if acao == ACAO_CRIAR else STATUS_ATUALIZADA
 
 
