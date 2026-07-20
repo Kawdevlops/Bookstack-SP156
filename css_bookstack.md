@@ -1,4 +1,5 @@
 Caso queiram personalizar o bookstack
+```css
 
 <style>
 
@@ -192,3 +193,4 @@ h1.header-title,
   padding-top: 6px;
 }
 </style>
+```
