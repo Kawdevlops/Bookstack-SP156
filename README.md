@@ -2,22 +2,23 @@
 
 Coleta os serviços/informativos do portal SP156 (SMSUB/SELIMP) e publica tudo automaticamente num BookStack, via Airflow.
 
-## Súmarios
-[Pré-requisitos](#pré-requisitos)
-[Como rodar](#como-rodar)
-[O que a DAG faz](#o-que-a-dag-faz)
-[Se algo não subir](#se-algo-não-subir)
-[Erros mais comuns](#erros-mais-comuns)
-[Certificados HTTPS (porta 443)](#certificados-https-porta-443)
-[Resetar o ambiente](#resetar-o-ambiente)
-[Estrutura](#estrutura)
-[Configuração visual do bookstack](css_bookstack.md)
-[Guia de Lógica do Código — SP156 → BookStack](#guia-logica)
-> [1. coleta.py](#1-coletapy)
-> [2. hash_bookstack.py](#2-hash_bookstackpy)
-> [3. bookstack_publicacao.py](#3-bookstack_publicacaopy) 
-> [4. backup_bookstack.py](#4-backup_bookstackpy) 
-> [5. atualizar_servicos_sp156.py — a DAG](#5-atualizar_servicos_sp156py-a-dag)
+## Sumário
+
+- [Pré-requisitos](#pré-requisitos)
+- [Como rodar](#como-rodar)
+- [O que a DAG faz](#o-que-a-dag-faz)
+- [Se algo não subir](#se-algo-não-subir)
+- [Erros mais comuns](#erros-mais-comuns)
+- [Certificados HTTPS (porta 443)](#certificados-https-porta-443)
+- [Resetar o ambiente](#resetar-o-ambiente)
+- [Estrutura](#estrutura)
+- [Configuração visual do bookstack](css_bookstack.md)
+- [Guia de Lógica do Código — SP156 → BookStack](#guia-logica)
+  - [1. coleta.py](#1-coletapy)
+  - [2. hash_bookstack.py](#2-hash_bookstackpy)
+  - [3. bookstack_publicacao.py](#3-bookstack_publicacaopy)
+  - [4. backup_bookstack.py](#4-backup_bookstackpy)
+  - [5. atualizar_servicos_sp156.py — a DAG](#5-atualizar_servicos_sp156py-a-dag)
 
 ## Pré-requisitos
 
@@ -95,9 +96,6 @@ docker exec airflow-webserver_sp156 cat /opt/airflow simple_auth_manager_passwor
 
 **6.** Faz backup do banco do BookStack uma vez por mês.
 
-```
-Quer entender a lógica interna de cada etapa (função por função, explicado em linguagem simples)? Veja `GUIA_LOGICA_DO_CODIGO.md` nesse mesmo repositório.
-```
 ## Se algo não subir
 
 Primeiro passo sempre: ver o log do serviço que falhou.
