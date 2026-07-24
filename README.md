@@ -59,7 +59,10 @@ pra confirmar)
 	- se aparecer: -rw-r--r-- 1 usuario usuario 826 ... setup.sh
 	- corrija: bash chmod +x setup.sh
 	- deve ficar assim: -rwxr-xr-x 1 usuario usuario 826 ... setup.sh
-- 3º : bash ./setup.sh
+- 3º: bash ./setup.sh
+- 4º: Pode ocorrer erro de permissão mesmo configurando caso aconteça, configure as permissoes de uma vez de todas as pastas.
+      -> No terminal: sudo chown -R $USER:$USER ~/Bookstack-SP156 
+	  -> sudo bash ./setup.sh
 
 <span style="color:red"> (equivalente a rodar `docker compose up -d --build` na mão, só que com
 as pastas já preparadas antes) </span> 
@@ -118,6 +121,7 @@ Quer entender a lógica interna de cada etapa (função por função, explicado 
 
 Primeiro passo sempre: ver o log do serviço que falhou.
 ```bash
+
 # log de um serviço específico, em tempo real
 
 docker  compose  logs  -f  airflow-scheduler
