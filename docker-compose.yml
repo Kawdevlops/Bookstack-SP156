@@ -70,15 +70,13 @@ services:
       PUID: 1000
       PGID: 1000
       TZ: America/Sao_Paulo
-      APP_URL: http://localhost
+      APP_URL: http://bookstack.localhost
       APP_KEY: ${BOOKSTACK_APP_KEY}
       DB_HOST: mariadb-bookstack
       DB_PORT: 3306
       DB_DATABASE: bookstack_sp156
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
-    # ports:
-    #   - "80:80"
     volumes:
       - bookstack_sp156_config:/config
     networks:
@@ -211,4 +209,3 @@ networks:
     driver: bridge
     driver_opts:
       com.docker.network.driver.mtu: 1400
-

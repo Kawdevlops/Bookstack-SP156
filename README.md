@@ -60,12 +60,12 @@ as pastas já preparadas antes) </span>
 
 **4.** Acesse:
 
--  **Airflow**: http://localhost:8080 — usuário `admin`, senha gerada automaticamente a cada subida do container. Pra ver a senha:
+-  **Airflow**: http://airflow.localhost — usuário `admin`, senha gerada automaticamente a cada subida do container. Pra ver a senha:
 ```bash
 docker exec airflow-webserver_sp156 cat /opt/airflow/simple_auth_manager_passwords.json.generated
 ```
 
--  **BookStack**: http://localhost — login padrão na primeira vez:
+-  **BookStack**: Serviço	Link http://bookstack.localhost— login padrão na primeira vez:
 
 `admin@admin.com` / `password`. **Troque essa senha assim que entrar** (Configurações → Usuários).
 
@@ -123,6 +123,8 @@ docker  compose  ps
 ```
 ## Erros mais comuns 
 
+
+
 -  **`dag-processor` reinicia sozinho / DAG não aparece na interface** →
 
 quase sempre é permissão de pasta. Rode `bash setup.sh` de novo (ele reajusta as permissões antes de subir).
@@ -141,6 +143,24 @@ O nginx está configurado para escutar em 80 e 443 (`nginx/conf.d/bookstack.conf
 ```bash
 docker  compose  down  -v
 ./setup.sh
+```
+
+```
+Ao executar setup.sh, erro: 
+Proxy Authentication Required
+
+Correção:
+.env
+# Proxy (adicione caso necessário)
+HTTP_PROXY=http://user:password@proxy_address:port
+HTTPS_PROXY=http://user:password@proxy_address:port
+NO_PROXY=localhost,127.0.0.1,.local
+
+setup.sh:
+# carrega variáveis do .env
+set -a
+source .env
+set +a
 ```
 
 ## Estrutura
