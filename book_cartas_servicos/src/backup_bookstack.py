@@ -8,7 +8,7 @@ from pathlib import Path
 NOME_BANCO = "bookstack_sp156"
 HOST_MARIADB = os.environ.get("MARIADB_HOST", "mariadb-bookstack")
 PASTA_BACKUPS_PADRAO = "/opt/airflow/backups"
-MANTER_ULTIMOS_PADRAO = 14  # ~2 semanas de backups diários
+MANTER_ULTIMOS_PADRAO = 14  
 
 def _rodar_mariadb_dump(destino_sql: Path) -> None:
     comando = [

@@ -46,8 +46,6 @@ preencher_se_vazio "BOOKSTACK_APP_KEY" \
     "python3 -c \"import secrets, base64; print('base64:' + base64.b64encode(secrets.token_bytes(32)).decode())\""
 preencher_se_vazio "MYSQL_ROOT_PASSWORD" \
     "python3 -c \"import secrets; print(secrets.token_urlsafe(24))\""
-preencher_se_vazio "BOOKSTACK_APP_KEY" \
-     "python3 -c \"import secrets, base64; print('base64:' + base64.b64encode(secrets.token_bytes(32)).decode())""
      
 UID_ATUAL="$(id -u)"
 

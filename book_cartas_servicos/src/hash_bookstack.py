@@ -5,22 +5,18 @@ import psycopg2
 import psycopg2.extras
 
 
-# Parte 1 - cálculo do hash
+# cálculo do hash
 
 def normalizar_para_hash(texto: str) -> str:
     return re.sub(r"\s+", " ", texto or "").strip()
 
-
 def calcular_hash(texto: str) -> str:
-    """Devolve o SHA-256 (hexadecimal) de um texto já normalizado."""
     return hashlib.sha256(texto.encode("utf-8")).hexdigest()
 
-
 def hash_de_conteudo(texto_bruto: str) -> str:
-    """Atalho: normaliza e calcula o hash em um passo só."""
     return calcular_hash(normalizar_para_hash(texto_bruto))
 
-# Parte 2 - conexão com o Postgres
+# conexão com o Postgres
 
 def _conectar():
     return psycopg2.connect(
@@ -30,7 +26,6 @@ def _conectar():
         user=os.environ["POSTGRES_USER"],
         password=os.environ["POSTGRES_PASSWORD"],
     )
-
 
 def _executar(comando: str, parametros: tuple = (), *, buscar_um: bool = False, buscar_todos: bool = False):
     usa_dict = buscar_um or buscar_todos
@@ -43,7 +38,6 @@ def _executar(comando: str, parametros: tuple = (), *, buscar_um: bool = False, 
             if buscar_todos:
                 return [dict(linha) for linha in cursor.fetchall()]
     return None
-
 
 def garantir_tabela() -> None:
     _executar("""
@@ -107,7 +101,7 @@ def listar_conflitos() -> list[dict]:
         buscar_todos=True,
     )
 
-# Parte 3 - a decisão (função pura, sem I/O)
+# a decisão 
 
 ACAO_CRIAR = "CRIAR"
 ACAO_ATUALIZAR = "ATUALIZAR"
@@ -133,21 +127,9 @@ def decidir_acao(
         return ACAO_PULAR
     return ACAO_ATUALIZAR
 
-# Parte 4 - migração pontual (rodar uma vez só)
+# migração pontual (rodar uma vez só)
 
 def recalibrar_todas_hash_publicado() -> None:
-    """
-    Corrige o hash_publicado de todas as páginas já salvas em pagina_hash,
-    recalculando a partir do HTML que o BookStack REALMENTE guarda (via
-    GET), não do que foi mandado na hora de publicar - motivo: o
-    BookStack reprocessa o HTML ao salvar, então o hash do que mandamos
-    nunca batia com uma leitura futura, mesmo sem edição manual nenhuma.
-
-    Import tardio (dentro da função, não no topo do arquivo): evita
-    dependência circular, já que bookstack_publicacao.py importa DESTE
-    arquivo - se este arquivo importasse de volta lá no topo, os dois
-    tentariam carregar um ao outro ao mesmo tempo e o Python travaria.
-    """
     from src.bookstack_publicacao import _obter_pagina_por_id
 
     linhas = _executar(

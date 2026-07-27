@@ -243,9 +243,6 @@ def _resolver_conflito_marcado(
         salvar_hashes(tipo, codigo_servico, hash_fonte_novo, hash_publicado_atual, pagina_id, em_conflito=False)
         return STATUS_APROVADA
 
-    # AQUI ESTÁ A CORREÇÃO: criar_atualizar devolve (id, html_salvo) agora,
-    # e é o html_salvo (o que o BookStack realmente guardou) que vira o
-    # hash_publicado - não o html_pagina que a gente mandou.
     pagina_id, html_salvo = criar_atualizar(pagina_id, capitulo_id, livro_id, nome, html_pagina, tipo, codigo_servico)
     hash_fonte_novo = hash_de_conteudo(html_pagina)
     hash_publicado_real = hash_de_conteudo(html_salvo)
@@ -263,15 +260,6 @@ def decidir_acao(
 
 def criar_atualizar(pagina_id: int | None, capitulo_id: int, livro_id: int,
                      nome: str, html_pagina: str, tipo: str, codigo_servico: str) -> tuple[int, str]:
-    """
-    Devolve (id_da_pagina, html_realmente_salvo).
-
-    O segundo valor é a correção do bug confirmado com dado real: o
-    BookStack reprocessa o HTML ao salvar (sanitiza, reformata) - o que
-    ele guarda de verdade não é igual ao que a gente manda. Buscando de
-    volta (GET) e hasheando o que o BookStack de fato armazenou, a
-    comparação futura fica "BookStack contra BookStack" - consistente.
-    """
     tags = [
         {"name": "sp156_tipo", "value": tipo},
         {"name": "sp156_codigo_servico", "value": codigo_servico},
@@ -315,7 +303,6 @@ def publicar_pagina(servico: dict, capitulo_nome: str, capitulo_id: int, livro_i
         marcar_conflito(tipo, codigo_servico)
         return STATUS_CONFLITO
 
-    # AQUI TAMBÉM: pega o html_salvo de volta e hasheia ELE, não o que mandamos.
     pagina_id, html_salvo = criar_atualizar(pagina_id, capitulo_id, livro_id, nome, html_pagina, tipo, codigo_servico)
     hash_publicado_real = hash_de_conteudo(html_salvo)
     salvar_hashes(tipo, codigo_servico, hash_novo, hash_publicado_real, pagina_id)

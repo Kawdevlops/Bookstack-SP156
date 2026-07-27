@@ -18,7 +18,8 @@ Coleta os serviços/informativos do portal SP156 (SMSUB/SELIMP) e publica tudo a
 	- [1. coleta.py](#1-coletapy)
 	- [2. hash_bookstack.py](#2-hash_bookstackpy)
 	- [3. bookstack_publicacao.py](#3-bookstack_publicacaopy) 
-	- [4. atualizar_servicos_sp156.py — a DAG](#4-atualizar_servicos_sp156py-a-dag)
+	- [4. backup_bookstack.py](#4-backup_bookstackpy)
+	- [5. atualizar_servicos_sp156.py — a DAG](#5-atualizar_servicos_sp156py-a-dag)
 
 ## Pré-requisitos
 
@@ -37,32 +38,22 @@ pra confirmar)
 
 **1.** Clone o repositório.
 
-**2.** Copie `.env.example` para `.env` e preencha os valores (veja a seção [Gerando os segredos do `.env`](#gerando-os-segredos-do-env) abaixo).
+**2.** Copie `.env.example` para `.env` (o `setup.sh` também faz isso sozinho, se você esquecer).
 
-### Gerando os segredos do `.env`
+> ℹ️ **Os segredos criptográficos são gerados automaticamente.** `AIRFLOW_FERNET_KEY`, `AIRFLOW_SECRET_KEY`, `AIRFLOW_JWT_SECRET`, `BOOKSTACK_APP_KEY` e `MYSQL_ROOT_PASSWORD` vêm vazios no `.env.example` de propósito — o `setup.sh` preenche cada um sozinho na primeira vez que roda, sem sobrescrever nada que já esteja preenchido. Só revise/troque os valores "legíveis" que já vêm com exemplo (`POSTGRES_USER`, `MYSQL_USER`, `DB_USERNAME`/`DB_PASSWORD`, `AIRFLOW_ADMIN_USER`/`AIRFLOW_ADMIN_PASSWORD`) se quiser algo diferente do padrão.
+>
+> Precisa **regerar** um segredo já preenchido (ex: ambiente novo do zero)? `bash setup.sh --regerar-segredos` — mas só use isso **antes** do primeiro `docker compose up`; regerar depois que os containers já rodaram (principalmente `MYSQL_ROOT_PASSWORD`) dessincroniza a senha do `.env` da senha real do banco.
 
-| Variável | Como gerar / Instrução | Observação Importante |
-| :--- | :--- | :--- |
-| `AIRFLOW_FERNET_KEY` | `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` | Nenhum desses vem preenchido no repositório — gere um valor único para cada. |
-| `AIRFLOW_SECRET_KEY` | `python3 -c "import secrets; print(secrets.token_hex(32))"` | |
-| `AIRFLOW_JWT_SECRET` | `python3 -c "import secrets; print(secrets.token_hex(32))"` | **Gere de novo**, não reaproveite o valor acima. |
-| `BOOKSTACK_APP_KEY` | `python3 -c "import secrets, base64; print('base64:' + base64.b64encode(secrets.token_bytes(32)).decode())"` | |
-| `MYSQL_ROOT_PASSWORD` | `python3 -c "import secrets; print(secrets.token_urlsafe(24))"` | |
-
-<span style="color:red">⚠️ **Nunca faça commit do `.env` real.** Ele contém senhas. chaves de verdade. O `.gitignore` já bloqueia isso, mas fique atento se copiar arquivos manualmente entre máquinas. </span>
+<span style="color:red">⚠️ **Nunca faça commit do `.env` real.** Ele contém senhas e chaves de verdade. O `.gitignore` já bloqueia isso, mas fique atento se copiar arquivos manualmente entre máquinas. </span>
 
 **3.** Suba tudo com o script de setup.sh ele ajusta a permissão das pastas compartilhadas com o container antes de subir, evitando que o `dag-processor` falhe por não conseguir escrever em `airflow/logs/`:
 
-- 1º: ajuste o UID do .env -> id -u o valor que aparecer coloque no AIRFLOW_UID=
-- 2º: confira como esta a permissão da pasta
+- 1º: confira como esta a permissão da pasta
 	- ls -la setup.sh
 	- se aparecer: -rw-r--r-- 1 usuario usuario 826 ... setup.sh
 	- corrija: bash chmod +x setup.sh
 	- deve ficar assim: -rwxr-xr-x 1 usuario usuario 826 ... setup.sh
-- 3º: bash ./setup.sh
-- 4º: Pode ocorrer erro de permissão mesmo configurando caso aconteça, configure as permissoes de uma vez de todas as pastas.
-      -> No terminal: sudo chown -R $USER:$USER ~/Bookstack-SP156 
-	  -> sudo bash ./setup.sh
+- 2º: bash ./setup.sh
 
 <span style="color:red"> (equivalente a rodar `docker compose up -d --build` na mão, só que com
 as pastas já preparadas antes) </span> 
@@ -112,7 +103,7 @@ Quando rodar a dag e aparecer conflito no Livro -> Atualização
 
 **4.** Publica no BookStack (Estante SP156 → Livro por categoria → Capítulo por grupo → Página por serviço), preservando edições manuais via controle de hash.
 
-> O backup do banco do BookStack **não é feito por essa DAG** — já existe um backup externo cobrindo o volume do MariaDB.
+**5.** Faz backup do banco do BookStack (`mariadb-dump`) uma vez por mês — controla isso guardando o mês do último backup numa Airflow Variable, então rodar a DAG várias vezes no mesmo mês não repete o dump à toa.
 
 ```
 Quer entender a lógica interna de cada etapa (função por função, explicado em linguagem simples)? Veja `GUIA_LOGICA_DO_CODIGO.md` nesse mesmo repositório.
@@ -157,18 +148,14 @@ docker  compose  down  -v
 ```
 > setup.sh # prepara permissões e sobe o docker compose
 > airflow/dags/ # DAG única do pipeline
-> book_cartas_servicos/src/ # código de coleta, publicação e hash
+> book_cartas_servicos/src/ # código de coleta, publicação, hash e backup
 > dados/ # JSONs gerados em runtime (não versionados)
 > nginx/conf.d/ # proxy reverso na frente do BookStack + Airflow
 > nginx/certs/ # certificados HTTPS (não versionados, gerar em produção)
+> backups/ # dumps mensais do BookStack (não versionados)
 > docker-compose.yml
 > Dockerfile
 
-GUIA_LOGICA_DO_CODIGO.md > explicação da lógica de cada arquivo, passo a passo
-```
-[[_TOC_]]
-
-  
 
 ## Guia de Lógica do Código — SP156 → BookStack <a id="guia-logica"></a>
 
@@ -182,11 +169,15 @@ A[coleta.py] -->|dados_completos.json| B[hash_bookstack.py]
 
 B -->|decisão: criar/atualizar/pular/conflito| C[bookstack_publicacao.py]
 
+C -->|páginas publicadas| D[backup_bookstack.py]
+
 E[atualizar_servicos_sp156.py<br/>DAG] -.orquestra tudo.-> A
 
 E -.-> B
 
 E -.-> C
+
+E -.-> D
 
 ```
 ---
@@ -250,11 +241,25 @@ Fala com a API do BookStack. Hierarquia: `Estante → Livro → Capítulo → P�
 
 -  `publicar_no_bookstack(arquivo, apenas_um=False)` — função principal chamada pela DAG. `apenas_um=True` processa só a primeira categoria (usado pra testar rápido, não usado em produção). Devolve um dicionário-resumo (`paginas_criadas`, `paginas_atualizadas` etc.) — é isso que aparece no log da task no Airflow.
 
-**🔗 Próximo:** é o fim da esteira de dados — não alimenta nenhum outro arquivo. Quem chama essa etapa, e em que ordem, é a DAG.
+**🔗 Próximo:** depois de publicar tudo, o pipeline segue pro backup — faz sentido backupar **depois**, pra capturar o conteúdo mais recente.
 
 ---
 
-## <a id="4-atualizar_servicos_sp156py-a-dag"></a>4. `atualizar_servicos_sp156.py` — a DAG
+## <a id="4-backup_bookstackpy"></a>4. `backup_bookstack.py`
+
+O mais simples de todos: dump do MariaDB → `.gz` → apaga backups antigos. Sem paralelismo, sem checkpoint (roda 1x por mês).
+
+-  `_rodar_mariadb_dump` — se falhar, apaga o `.sql` parcial (evita backup corrompido disfarçado de válido).
+
+-  `_apagar_backups_antigos` — nome do arquivo tem timestamp, então ordenar por nome já ordena por data. Mantém só os `MANTER_ULTIMOS_PADRAO` (14) mais recentes.
+
+-  `fazer_backup` — junta os dois passos acima e devolve o caminho do arquivo gerado.
+
+**🔗 Próximo:** não alimenta nenhum outro arquivo. Quem decide *quando* chamar (regra de "1x por mês") é a DAG.
+
+---
+
+## <a id="5-atualizar_servicos_sp156py-a-dag"></a>5. `atualizar_servicos_sp156.py` — a DAG
 
 Não faz trabalho pesado sozinho — importa os arquivos acima e define **ordem** e **regras** de quando cada um roda:
 
@@ -265,6 +270,8 @@ from src.coleta import pegar_menu, completar_dados
 from src.bookstack_publicacao import publicar_no_bookstack
 
 from src.hash_bookstack import garantir_tabela
+
+from src.backup_bookstack import fazer_backup
 
 ```
 Pontos-chave:
@@ -277,7 +284,9 @@ Pontos-chave:
 
 -  `max_active_runs=1` — impede duas execuções ao mesmo tempo (evitaria coletar em duplicidade e causar mais bloqueio).
 
--  `ajustar_permissoes >> tabela >> menu >> completos >> publicar` — o `>>` significa **"depende de"**: cada task só começa depois que a anterior termina com sucesso.
+-  `backup_bookstack_task` — só chama `fazer_backup()` se o mês mudou desde o último backup salvo numa Airflow Variable. É assim que "mensal" é implementado mesmo a DAG rodando várias vezes no mês.
+
+-  `ajustar_permissoes >> tabela >> menu >> completos >> publicar >> backup` — o `>>` significa **"depende de"**: cada task só começa depois que a anterior termina com sucesso.
 
 **🔗 Fechando o ciclo:**
 
@@ -287,6 +296,8 @@ coleta.py → dados_completos.json
 → hash_bookstack.py decide a ação
 
 → bookstack_publicacao.py publica
+
+→ backup_bookstack.py faz o dump
 
 atualizar_servicos_sp156.py amarra os arquivos acima numa DAG.
 
