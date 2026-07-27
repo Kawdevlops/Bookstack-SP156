@@ -48,13 +48,6 @@ pra confirmar)
 
 **3.** Suba tudo com o script de setup.sh ele ajusta a permissão das pastas compartilhadas com o container antes de subir, evitando que o `dag-processor` falhe por não conseguir escrever em `airflow/logs/`:
 
-- 1º: confira como esta a permissão da pasta
-	- ls -la setup.sh
-	- se aparecer: -rw-r--r-- 1 usuario usuario 826 ... setup.sh
-	- corrija: bash chmod +x setup.sh
-	- deve ficar assim: -rwxr-xr-x 1 usuario usuario 826 ... setup.sh
-- 2º: bash ./setup.sh
-
 <span style="color:red"> (equivalente a rodar `docker compose up -d --build` na mão, só que com
 as pastas já preparadas antes) </span> 
 
