@@ -313,8 +313,11 @@ def publicar_pagina(servico: dict, capitulo_nome: str, capitulo_id: int, livro_i
 def _secao_instrucoes() -> str:
     return (
         "<h4>Como resolver um conflito (pra quem edita)</h4>"
-        "<p>Quando uma página aparece na lista \"Editado manualmente — aguardando revisão\" abaixo, "
-        "o robô parou de atualizá-la sozinho... </p>"
+        "<p>Quando uma página aparece na lista \"Editado manualmente — aguardando revisão\" abaixo, está as atualizações feitas por automação "
+        "> Precisa ir até a página que foi editada manualmente, pegue o código e coloque na barra de pesquisa para facilitar a procura."
+        "> Clicar em editar "
+        "> Ao lado direita vera um tag, colocar sp156_aprovado` / `sp156_rejeitado e rodar a dag novamente."
+        "> Quando coloca essa tag o robô de atulização entenderá que você autorizou ele manter a edição manual e caso não queira a edição manual só colocar a tag sp156_rejeitado </p>"
     )
 
 

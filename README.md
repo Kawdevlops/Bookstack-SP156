@@ -226,6 +226,8 @@ set +a
 
 ## <a id="1-coletapy"></a>1. `coleta.py`
 
+```
+
 Busca os dados no site do SP156. Não sabe nada sobre BookStack ou banco — só coleta e salva em JSON. 3 etapas, cada uma com checkpoint próprio (retoma de onde parou, não do zero).
 
 | Função | O que faz | Por quê |
