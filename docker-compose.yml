@@ -2,7 +2,7 @@ x-airflow-common: &airflow-common
   build:
     context: .
     dockerfile: Dockerfile
-  image: airflow-sp156:3.2.2-chromium
+  image: airflow-service:3.2.2-chromium
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
@@ -13,43 +13,45 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: "${AIRFLOW_ADMIN_USER}:admin"
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+    AIRFLOW__API__EXPOSE_CONFIG: "True"
     PYTHONPATH: /opt/airflow
     BOOKSTACK_URL: ${BOOKSTACK_URL}
     BOOKSTACK_TOKEN_ID: ${BOOKSTACK_TOKEN_ID}
     BOOKSTACK_TOKEN_SECRET: ${BOOKSTACK_TOKEN_SECRET}
+    BOOKSTACK_DB_HOST: mariadb_service
+    BOOKSTACK_DB_NAME: bookstack_service
     POSTGRES_USER: ${POSTGRES_USER}
     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     POSTGRES_DB: ${POSTGRES_DB}
     MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-    BOOKSTACK_DB_HOST: mariadb-bookstack
-    BOOKSTACK_DB_NAME: bookstack_sp156
+    MARIADB_HOST: ${MARIADB_HOST}
   volumes:
-    - ./airflow/dags:/opt/airflow/dags
-    - ./airflow/logs:/opt/airflow/logs
-    - ./airflow/plugins:/opt/airflow/plugins
-    - ./book_cartas_servicos/src:/opt/airflow/src
-    - ./book_cartas_servicos/dados:/opt/airflow/dados
-    - ./backups:/opt/airflow/backups
+  - ./airflow/dags:/opt/airflow/dags
+  - ./airflow/logs:/opt/airflow/logs
+  - ./airflow/plugins:/opt/airflow/plugins
+  - ./airflow/include:/opt/airflow/include
+  - ./airflow/dados:/opt/airflow/dados
+  - ./backups:/opt/airflow/backups
   networks:
-    - bookstack_net
+    - service_net
   depends_on:
     postgres:
       condition: service_healthy
 
 services:
 
-  mariadb-bookstack:
+  mariadb_service:
     image: mariadb:10.11
-    container_name: mariadb-bookstack
+    container_name: mariadb_service
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: bookstack_sp156
+      MYSQL_DATABASE: bookstack_service
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
-      - mariadb_sp156_data:/var/lib/mysql
+      - mariadb_service_data:/var/lib/mysql
     networks:
-      - bookstack_net
+      - service_net
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
@@ -57,14 +59,14 @@ services:
       timeout: 5s
       retries: 10
       start_period: 90s
-    mem_limit: 1g
-    cpus: 1.0
+    # mem_limit: 1g
+    # cpus: 1.0
 
-  bookstack-sp156:
+  bookstack_service:
     image: lscr.io/linuxserver/bookstack:version-v26.05.1
-    container_name: bookstack-sp156
+    container_name: bookstack_service
     depends_on:
-      mariadb-bookstack:
+      mariadb_service:
         condition: service_healthy
     environment:
       PUID: 1000
@@ -72,22 +74,28 @@ services:
       TZ: America/Sao_Paulo
       APP_URL: http://bookstack.localhost
       APP_KEY: ${BOOKSTACK_APP_KEY}
-      DB_HOST: mariadb-bookstack
+      DB_HOST: mariadb_service
       DB_PORT: 3306
-      DB_DATABASE: bookstack_sp156
+      DB_DATABASE: bookstack_service
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
     volumes:
-      - bookstack_sp156_config:/config
+      - bookstack_service_config:/config
     networks:
-      - bookstack_net
+      - service_net
     restart: unless-stopped
-    mem_limit: 768m
-    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 180s
+    # mem_limit: 768m
+    # cpus: 1.0
 
   postgres:
     image: postgres:16
-    container_name: postgres_sp156
+    container_name: postgres_service
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -96,32 +104,32 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
-      - bookstack_net
+      - service_net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 20s
       timeout: 5s
       retries: 10
       start_period: 20s
-    mem_limit: 1g
-    cpus: 1.0
+    # mem_limit: 1g
+    # cpus: 1.0
 
 
   airflow-init:
     <<: *airflow-common
-    container_name: airflow-init_sp156
+    container_name: airflow-init_service
     user: "${AIRFLOW_UID}:0"
     entrypoint: /bin/bash
     command:
       - -c
       - exec /entrypoint airflow db migrate
-    mem_limit: 1g
-    cpus: 1.0
+    # mem_limit: 1g
+    # cpus: 1.0
 
 
   airflow-webserver:
     <<: *airflow-common
-    container_name: airflow-webserver_sp156
+    container_name: airflow-webserver_service
     depends_on:
       postgres:
         condition: service_healthy
@@ -137,14 +145,14 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
-    mem_limit: 1.5g
-    cpus: 1.0
+    # mem_limit: 1.5g
+    # cpus: 1.0
 
 
   airflow-scheduler:
     <<: *airflow-common
     shm_size: '2gb'
-    container_name: airflow-scheduler_sp156
+    container_name: airflow-scheduler_service
     depends_on:
       postgres:
         condition: service_healthy
@@ -158,13 +166,13 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
-    mem_limit: 4g
-    cpus: 2.0
+    # mem_limit: 4g
+    # cpus: 2.0
 
 
   airflow-dag-processor:
     <<: *airflow-common
-    container_name: airflow-dag-processor_sp156
+    container_name: airflow-dag-processor_service
     depends_on:
       postgres:
         condition: service_healthy
@@ -173,17 +181,17 @@ services:
     user: "${AIRFLOW_UID}:0"
     command: dag-processor
     restart: unless-stopped
-    mem_limit: 1g
-    cpus: 1.0
+    # mem_limit: 1g
+    # cpus: 1.0
 
 
   nginx:
     image: nginx:1.27-alpine
-    container_name: nginx-sp156
+    container_name: nginx-service
     restart: unless-stopped
     depends_on:
-      bookstack-sp156:
-        condition: service_started
+      bookstack_service:
+        condition: service_healthy
       airflow-webserver:
         condition: service_healthy
     ports:
@@ -194,18 +202,18 @@ services:
       - ./nginx/certs:/etc/nginx/certs:ro
       - ./nginx/logs:/var/log/nginx
     networks:
-      - bookstack_net
-    mem_limit: 128m
-    cpus: 0.5
+      - service_net
+    # mem_limit: 128m
+    # cpus: 0.5
 
 volumes:
-  mariadb_sp156_data:
-  bookstack_sp156_config:
+  mariadb_service_data:
+  bookstack_service_config:
   postgres_data:
 
 networks:
-  bookstack_net:
-    name: bookstack_net
+  service_net:
+    name: service_net
     driver: bridge
     driver_opts:
       com.docker.network.driver.mtu: 1400

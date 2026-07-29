@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta
 from airflow.sdk import dag, task, Variable
 from airflow.providers.standard.operators.bash import BashOperator
-from src.coleta import pegar_menu, completar_dados
-from src.bookstack_publicacao import publicar_no_bookstack
-from src.hash_bookstack import garantir_tabela
-from src.backup_bookstack import fazer_backup
+from include.coleta import pegar_menu, completar_dados
+from include.bookstack_publicacao import publicar_no_bookstack
+from include.hash_bookstack import garantir_tabela
+from include.backup_bookstack import fazer_backup
 
 DEFAULT_ARGS = {"retries": 2, "retry_delay": timedelta(minutes=5)}
 

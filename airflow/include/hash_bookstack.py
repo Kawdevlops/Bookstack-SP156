@@ -130,7 +130,7 @@ def decidir_acao(
 # migração pontual (rodar uma vez só)
 
 def recalibrar_todas_hash_publicado() -> None:
-    from src.bookstack_publicacao import _obter_pagina_por_id
+    from include.bookstack_publicacao import _obter_pagina_por_id
 
     linhas = _executar(
         "SELECT tipo, codigo_servico, bookstack_page_id FROM pagina_hash "

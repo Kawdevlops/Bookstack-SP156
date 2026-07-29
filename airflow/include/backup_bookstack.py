@@ -5,7 +5,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-NOME_BANCO = "bookstack_sp156"
+NOME_BANCO = "bookstack_service"
 HOST_MARIADB = os.environ.get("MARIADB_HOST", "mariadb-bookstack")
 PASTA_BACKUPS_PADRAO = "/opt/airflow/backups"
 MANTER_ULTIMOS_PADRAO = 14  

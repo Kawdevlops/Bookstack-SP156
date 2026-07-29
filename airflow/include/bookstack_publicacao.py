@@ -9,14 +9,15 @@ from collections import defaultdict
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from airflow.sdk import Variable
 
-from src.coleta import (
+from include.coleta import (
     MARCADOR_LINK_INICIO,
     MARCADOR_LINK_MEIO,
     MARCADOR_LINK_FIM,
     MARCADOR_PARAGRAFO,
 )
-from src.hash_bookstack import (
+from include.hash_bookstack import (
     hash_de_conteudo,
     obter_hashes_salvos,
     salvar_hashes,
@@ -55,7 +56,7 @@ TAG_REJEITADO = "sp156_rejeitado"
 
 def _headers() -> dict:
     return {
-        "Authorization": f"Token {os.environ['BOOKSTACK_TOKEN_ID']}:{os.environ['BOOKSTACK_TOKEN_SECRET']}",
+        "Authorization": f"Token {Variable.get('BOOKSTACK_TOKEN_ID')}:{Variable.get('BOOKSTACK_TOKEN_SECRET')}",
         "Content-Type": "application/json",
     }
 

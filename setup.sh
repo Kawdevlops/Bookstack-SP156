@@ -42,8 +42,6 @@ preencher_se_vazio "AIRFLOW_SECRET_KEY" \
     "python3 -c \"import secrets; print(secrets.token_hex(32))\""
 preencher_se_vazio "AIRFLOW_JWT_SECRET" \
     "python3 -c \"import secrets; print(secrets.token_hex(32))\""
-preencher_se_vazio "BOOKSTACK_APP_KEY" \
-    "python3 -c \"import secrets, base64; print('base64:' + base64.b64encode(secrets.token_bytes(32)).decode())\""
 preencher_se_vazio "MYSQL_ROOT_PASSWORD" \
     "python3 -c \"import secrets; print(secrets.token_urlsafe(24))\""
      
@@ -58,10 +56,10 @@ AIRFLOW_UID="$UID_ATUAL"
 
 echo "Usando AIRFLOW_UID=$AIRFLOW_UID"
 
-mkdir -p airflow/logs airflow/dags airflow/plugins book_cartas_servicos/dados backups nginx/certs nginx/logs
+mkdir -p airflow/logs airflow/dags airflow/plugins airflow/dados airflow/include backups nginx/certs nginx/logs
 
-sudo chown -R "$AIRFLOW_UID:0" airflow book_cartas_servicos backups
-chmod -R 775 airflow book_cartas_servicos backups
+sudo chown -R "$AIRFLOW_UID:0" airflow backups
+chmod -R 775 airflow backups
 
 echo "Permissões ajustadas. Subindo os containers..."
 docker compose up -d --build

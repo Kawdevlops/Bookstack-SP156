@@ -3,23 +3,26 @@
 Coleta os serviços/informativos do portal SP156 (SMSUB/SELIMP) e publica tudo automaticamente num BookStack, via Airflow.
 
 ## Súmarios
-- [Pré-requisitos](#pré-requisitos)
-- [Como rodar](#como-rodar)
-- [Criar perfil de Editor no bookstack](#criar-perfil-de-editor-no-bookstack)
-- [Tags para autorizar ou negar a Edição Manual](#tags-para-autorizar-ou-negar-a-edição-manual)
-- [O que a DAG faz](#o-que-a-dag-faz)
-- [Se algo não subir](#se-algo-não-subir)
-- [Erros mais comuns](#erros-mais-comuns)
-- [Certificados HTTPS (porta 443)](#certificados-https-porta-443)
-- [Resetar o ambiente](#resetar-o-ambiente)
-- [Estrutura](#estrutura)
-- [Configuração visual do bookstack](css_bookstack.md)
-- [Guia de Lógica do Código — SP156 → BookStack](#guia-logica)
-	- [1. coleta.py](#1-coletapy)
-	- [2. hash_bookstack.py](#2-hash_bookstackpy)
-	- [3. bookstack_publicacao.py](#3-bookstack_publicacaopy) 
-	- [4. backup_bookstack.py](#4-backup_bookstackpy)
-	- [5. atualizar_servicos_sp156.py — a DAG](#5-atualizar_servicos_sp156py-a-dag)
+- [SP156 → BookStack](#sp156--bookstack)
+	- [Súmarios](#súmarios)
+	- [Pré-requisitos](#pré-requisitos)
+	- [Como rodar](#como-rodar)
+	- [Criar perfil de Editor no bookstack](#criar-perfil-de-editor-no-bookstack)
+	- [Tags para autorizar ou negar a Edição Manual](#tags-para-autorizar-ou-negar-a-edição-manual)
+	- [Estrutura de Pastas do Airflow](#estrutura-de-pastas-do-airflow)
+	- [Configurar as Variáveis do BookStack no Airflow](#configurar-as-variáveis-do-bookstack-no-airflow)
+	- [O que a DAG faz](#o-que-a-dag-faz)
+	- [Se algo não subir](#se-algo-não-subir)
+	- [Erros mais comuns](#erros-mais-comuns)
+	- [Certificados HTTPS (porta 443)](#certificados-https-porta-443)
+	- [Resetar o ambiente](#resetar-o-ambiente)
+	- [Estrutura](#estrutura)
+	- [1. `coleta.py`](#1-coletapy)
+	- [2. `hash_bookstack.py`](#2-hash_bookstackpy)
+	- [3. `bookstack_publicacao.py`](#3-bookstack_publicacaopy)
+	- [4. `backup_bookstack.py`](#4-backup_bookstackpy)
+	- [5. `atualizar_servicos_sp156.py` — a DAG](#5-atualizar_servicos_sp156py--a-dag)
+
 
 ## Pré-requisitos
 
@@ -36,13 +39,15 @@ pra confirmar)
 
 ## Como rodar
 
+![Ver Fluxograma](assets/Vertical- bookstack.png)
+
 **1.** Clone o repositório.
 
 **2.** Copie `.env.example` para `.env` (o `setup.sh` também faz isso sozinho, se você esquecer).
 
 > ℹ️ **Os segredos criptográficos são gerados automaticamente.** `AIRFLOW_FERNET_KEY`, `AIRFLOW_SECRET_KEY`, `AIRFLOW_JWT_SECRET`, `BOOKSTACK_APP_KEY` e `MYSQL_ROOT_PASSWORD` vêm vazios no `.env.example` de propósito — o `setup.sh` preenche cada um sozinho na primeira vez que roda, sem sobrescrever nada que já esteja preenchido. Só revise/troque os valores "legíveis" que já vêm com exemplo (`POSTGRES_USER`, `MYSQL_USER`, `DB_USERNAME`/`DB_PASSWORD`, `AIRFLOW_ADMIN_USER`/`AIRFLOW_ADMIN_PASSWORD`) se quiser algo diferente do padrão.
->
-> Precisa **regerar** um segredo já preenchido (ex: ambiente novo do zero)? `bash setup.sh --regerar-segredos` — mas só use isso **antes** do primeiro `docker compose up`; regerar depois que os containers já rodaram (principalmente `MYSQL_ROOT_PASSWORD`) dessincroniza a senha do `.env` da senha real do banco.
+
+> Precisa **resetar** um segredo já preenchido (ex: ambiente novo do zero)? `bash setup.sh --regerar-segredos` — mas só use isso **antes** do primeiro `docker compose up`; regerar depois que os containers já rodaram (principalmente `MYSQL_ROOT_PASSWORD`) dessincroniza a senha do `.env` da senha real do banco.
 
 <span style="color:red">⚠️ **Nunca faça commit do `.env` real.** Ele contém senhas e chaves de verdade. O `.gitignore` já bloqueia isso, mas fique atento se copiar arquivos manualmente entre máquinas. </span>
 
@@ -55,7 +60,7 @@ as pastas já preparadas antes) </span>
 
 -  **Airflow**: http://airflow.localhost — usuário `admin`, senha gerada automaticamente a cada subida do container. Pra ver a senha:
 ```bash
-docker exec airflow-webserver_sp156 cat /opt/airflow/simple_auth_manager_passwords.json.generated
+docker exec airflow-webserver_service cat /opt/airflow/simple_auth_manager_passwords.json.generated
 ```
 
 -  **BookStack**: Serviço	Link http://bookstack.localhost— login padrão na primeira vez:
@@ -64,7 +69,8 @@ docker exec airflow-webserver_sp156 cat /opt/airflow/simple_auth_manager_passwor
 
 **5.** No Airflow, ative e dispare a DAG `atualizar_servicos_sp156`.
 
-**6.** Gere o token de API do BookStack: menu do usuário → **Meu perfil** → **Tokens de API** → **Coloque o nome do token mas não coloque data** criar token novo, e cole `BOOKSTACK_TOKEN_ID` / `BOOKSTACK_TOKEN_SECRET` no `.env`. Depois de adicionar, suba de novo (`docker compose up -d`) pra essas variáveis chegarem ao container.
+**6.** Cadastre o token de API do BookStack como **Airflow Variable**.
+Passo a passo completo em [Configurar as Variáveis do BookStack no Airflow](#configurar-as-variáveis-do-bookstack-no-airflow).
 
 ## Criar perfil de Editor no bookstack
 
@@ -77,14 +83,63 @@ docker exec airflow-webserver_sp156 cat /opt/airflow/simple_auth_manager_passwor
 - Depois só entrar com o perfil de editor
 
 Para deixar o conteúdo publico apenas para vizualização ou exportação: Configurações -> Já na primeira página Acesso Público marque a caixa
+
+Para personalizar o bookstack para melhor visualização.
+[Estilo do Bookstack](assets/css_bookstack.md)
 ```
 
 ## Tags para autorizar ou negar a Edição Manual
 
 ```
-Quando rodar a dag e aparecer conflito no Livro -> Atualização
- - Pegue o código e vá até a pagina -> Clique em editar -> Na lateral direita clique em Editar -> Terá uma barra lateral a sua direita -> Clique no segundo ícone -> Adicionar outro marcador -> preencha o campo "Nome do marcador" com "sp156_rejeitado" (restaura o conteúdo oficial) ou "sp156_aprovado" (mantém a edição manual). Só o nome da tag importa - o campo "Valor do marcador" pode ficar em branco.
+Quando rodar a dag e aparecer conflito no Livro Atualização
+ - Pegue o código e vá até a página -> Clique em editar -> Na lateral direita clique em Editar -> Terá uma barra lateral a sua direita -> Clique no segundo ícone -> Adicionar outro marcador -> preencha o campo "Nome do marcador" com "sp156_rejeitado" (restaura o conteúdo oficial) ou "sp156_aprovado" (mantém a edição manual). Só o nome da tag importa - o campo "Valor do marcador" pode ficar em branco.
 ```
+
+## Estrutura de Pastas do Airflow
+
+O projeto separa **o que é DAG** do **que é código auxiliar**. Essa separação é uma boa prática comum em projetos Airflow — evita que o `dag-processor` (o processo que fica escaneando pastas em busca de DAGs) perca performance ou se confunda tentando interpretar arquivos que não são DAGs.
+
+-  **`airflow/dags/`** → contém **exclusivamente** arquivos `.py` que definem DAGs (neste projeto, só `atualizar_servicos_sp156.py`). Nada de função auxiliar, script de coleta ou lógica de negócio aqui dentro.
+
+-  **`airflow/include/`** → guarda os scripts de ETL e códigos `.py` auxiliares (`coleta.py`, `hash_bookstack.py`, `bookstack_publicacao.py`, `backup_bookstack.py`). É daqui que a DAG importa as funções que ela orquestra.
+
+-  **`PYTHONPATH=/opt/airflow`** → configurado no `docker-compose.yml` (dentro do bloco `x-airflow-common`). Isso diz ao Python "procure módulos a partir da raiz `/opt/airflow`", que é onde `dags/` e `include/` são montados dentro do container. Por causa disso, a DAG importa assim:
+
+```python
+from include.coleta import pegar_menu, completar_dados
+from include.bookstack_publicacao import publicar_no_bookstack
+from include.hash_bookstack import garantir_tabela
+from include.backup_bookstack import fazer_backup
+```
+
+> Se criar um novo módulo auxiliar, ele vai em `airflow/include/` e é importado como `from include.seu_modulo import sua_funcao` — não precisa mexer em `PYTHONPATH` nem no `docker-compose.yml` pra isso funcionar.
+
+## Configurar as Variáveis do BookStack no Airflow
+
+O pipeline precisa de um Token de API do BookStack pra conseguir criar/atualizar páginas via API. Esse token **não fica mais no `.env`** — ele é cadastrado como **Airflow Variable**, que é o jeito recomendado pelo próprio Airflow de guardar configuração/segredo que a DAG usa em tempo de execução (dá pra trocar sem precisar subir os containers de novo).
+
+**Passo 1.** Acesse a interface web do BookStack (`http://bookstack.localhost`), entre com o usuário Administrador, vá em **Meu perfil** e crie um **Token de API**. Copie o **Token ID** e o **Token Secret** — o Secret só aparece uma vez, na hora da criação.
+
+**Passo 2.** Acesse o painel do Airflow em `http://localhost:8080`.
+
+**Passo 3.** No menu superior, navegue até **Admin → Variables**.
+
+**Passo 4.** Adicione duas variáveis novas:
+
+| Chave | Valor |
+| :--- | :--- |
+| `BOOKSTACK_TOKEN_ID` | Cole aqui o Token ID gerado no Passo 1 |
+| `BOOKSTACK_TOKEN_SECRET` | Cole aqui o Token Secret gerado no Passo 1 |
+
+**Passo 5.** Alternativa: se preferir injetar direto como variável de ambiente do contêiner (em vez de Airflow Variable), o código Python lê assim:
+
+```python
+import os
+token_id = os.environ.get('BOOKSTACK_TOKEN_ID')
+token_secret = os.environ.get('BOOKSTACK_TOKEN_SECRET')
+```
+
+> **Quando usar cada opção?** Airflow Variable é editável pela interface web, sem precisar redeploy — bom pra rotacionar o token sem mexer em arquivo nenhum. Variável de ambiente do contêiner é definida no `docker-compose.yml`/`.env` e só muda quando você sobe os containers de novo — mais rígido, mas fica versionado junto da infra (exceto o valor do segredo em si, que continua fora do Git).
 
 ## O que a DAG faz
 
@@ -114,9 +169,8 @@ docker  compose  logs  -f  airflow-scheduler
 
 docker  compose  ps
 ```
+
 ## Erros mais comuns 
-
-
 
 -  **`dag-processor` reinicia sozinho / DAG não aparece na interface** →
 
@@ -160,39 +214,14 @@ set +a
 
 ```
 > setup.sh # prepara permissões e sobe o docker compose
-> airflow/dags/ # DAG única do pipeline
-> book_cartas_servicos/src/ # código de coleta, publicação, hash e backup
-> dados/ # JSONs gerados em runtime (não versionados)
+> airflow/dags/ # exclusivamente definições de DAG (.py)
+> airflow/include/ # código de coleta, publicação, hash e backup (ETL)
+> airflow/dados/ # JSONs gerados em runtime (não versionados)
 > nginx/conf.d/ # proxy reverso na frente do BookStack + Airflow
 > nginx/certs/ # certificados HTTPS (não versionados, gerar em produção)
 > backups/ # dumps mensais do BookStack (não versionados)
 > docker-compose.yml
 > Dockerfile
-
-
-## Guia de Lógica do Código — SP156 → BookStack <a id="guia-logica"></a>
-
-Ordem de leitura: **não é a ordem alfabética da pasta**, é a ordem em que o pipeline roda de verdade.
-
-```mermaid
-
-flowchart LR
-
-A[coleta.py] -->|dados_completos.json| B[hash_bookstack.py]
-
-B -->|decisão: criar/atualizar/pular/conflito| C[bookstack_publicacao.py]
-
-C -->|páginas publicadas| D[backup_bookstack.py]
-
-E[atualizar_servicos_sp156.py<br/>DAG] -.orquestra tudo.-> A
-
-E -.-> B
-
-E -.-> C
-
-E -.-> D
-
-```
 ---
 
 ## <a id="1-coletapy"></a>1. `coleta.py`
@@ -278,13 +307,13 @@ Não faz trabalho pesado sozinho — importa os arquivos acima e define **ordem*
 
 ```python
 
-from src.coleta import pegar_menu, completar_dados
+from include.coleta import pegar_menu, completar_dados
 
-from src.bookstack_publicacao import publicar_no_bookstack
+from include.bookstack_publicacao import publicar_no_bookstack
 
-from src.hash_bookstack import garantir_tabela
+from include.hash_bookstack import garantir_tabela
 
-from src.backup_bookstack import fazer_backup
+from include.backup_bookstack import fazer_backup
 
 ```
 Pontos-chave:
