@@ -173,7 +173,7 @@ Quando a DAG rodar e aparecer um conflito no Livro de Atualização:
 | `sp156_rejeitado` | Restaura o conteúdo oficial (descarta a edição manual) |
 | `sp156_aprovado` | Mantém a edição manual (ignora a fonte oficial) |
 
-<span style="color:red">⚠️ **Só o nome do marcador importa** — o campo "Valor do marcador" pode ficar em branco.</span>
+<span style="color:red">⚠️ **Só o nome do marcador importa** o campo "Valor do marcador" pode ficar em branco.</span>
 
 ---
 
@@ -239,13 +239,13 @@ docker compose ps
 
 | Sintoma | Causa provável | O que fazer |
 | :--- | :--- | :--- |
-| `dag-processor` reinicia sozinho / DAG não aparece na interface | Permissão de pasta | Rode `bash setup.sh` de novo — ele reajusta as permissões antes de subir |
+| `dag-processor` reinicia sozinho / DAG não aparece na interface | Permissão de pasta | Rode `bash setup.sh` de novo, ele reajusta as permissões antes de subir |
 | Airflow sobe mas fica **unhealthy** | Postgres ainda inicializando | Espere ~60s (o `start_period` do healthcheck) antes de considerar que travou de verdade |
 | `docker compose up` falha na porta | Porta `80`, `443` ou `8080` já em uso no host | Libere a porta ou pare o outro serviço |
-| **502 Bad Gateway** no nginx logo após `--build` | O container de destino (BookStack/Airflow) ainda não terminou de inicializar quando o nginx já começou a aceitar tráfego | Confirme no `docker compose ps` se o serviço já está `(healthy)`; se o `nginx-service` estiver com tempo de vida muito maior que os outros, force a recriação: `docker compose up -d --force-recreate nginx` |
-| `docker compose logs nginx` não mostra nada, mesmo com erro acontecendo | O `access_log`/`error_log` do nginx está apontando pra um arquivo próprio (`nginx/conf.d/*.conf`), não para a saída padrão do container | Aponte os dois para `/dev/stdout` e `/dev/stderr` no arquivo `.conf` — assim voltam a aparecer em `docker compose logs` |
+| **502 Bad Gateway** no nginx logo após `--build` | O container de destino (BookStack/Airflow) ainda não terminou de inicializar quando o nginx já começou a aceitar tráfego | Confirme no `docker compose ps` se o serviço já está `(healthy)` se o `nginx-service` estiver com tempo de vida muito maior que os outros, force a recriação: `docker compose up -d --force-recreate nginx` |
+| `docker compose logs nginx` não mostra nada, mesmo com erro acontecendo | O `access_log`/`error_log` do nginx está apontando pra um arquivo próprio (`nginx/conf.d/*.conf`), não para a saída padrão do container | Aponte os dois para `/dev/stdout` e `/dev/stderr` no arquivo `.conf` assim voltam a aparecer em `docker compose logs` |
 | `bookstack_service` fica **unhealthy** logo após um reset (`down -v`) | Instalação nova roda todas as migrações do banco do zero, o que demora mais que o `start_period` padrão do healthcheck | Aumente o `start_period` do healthcheck do `bookstack_service` (ex: `180s`) para cobrir uma instalação do zero |
-| `Proxy Authentication Required` ao rodar `setup.sh` | Rede corporativa/servidor atrás de proxy | Adicione ao `.env`: `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY=localhost,127.0.0.1,.local` — e confirme que o `setup.sh` carrega o `.env` com `set -a; source .env; set +a` antes de usar essas variáveis |
+| `Proxy Authentication Required` ao rodar `setup.sh` | Rede corporativa/servidor atrás de proxy | Adicione ao `.env`: `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY=localhost,127.0.0.1,.local` e confirme que o `setup.sh` carrega o `.env` com `set -a; source .env; set +a` antes de usar essas variáveis |
 
 ---
 
@@ -253,7 +253,7 @@ docker compose ps
 
 ## Certificados HTTPS (porta 443)
 
-O nginx está configurado para escutar em `80` e `443` (`nginx/conf.d/bookstack.conf`), mas os certificados em `nginx/certs/` **não são versionados** (ficam fora do Git por segurança — veja `.gitignore`).
+O nginx está configurado para escutar em `80` e `443` (`nginx/conf.d/bookstack.conf`), mas os certificados em `nginx/certs/` **não são versionados** (ficam fora do Git por segurança veja `.gitignore`).
 
 <span style="color:red">⚠️ **Para produção com HTTPS real**, gere um certificado (ex: Let's Encrypt) e coloque os arquivos em `nginx/certs/` antes de subir.</span>
 
@@ -268,7 +268,7 @@ docker compose down -v
 ./setup.sh
 ```
 
-<span style="color:red">⚠️ **O `-v` apaga volumes — inclusive todo o conteúdo do BookStack (páginas, livros, usuários) e o histórico do Airflow (execuções passadas, Airflow Variables cadastradas, como o token do BookStack).** Depois desse comando, será preciso recadastrar o token do zero.</span>
+<span style="color:red">⚠️ **O `-v` apaga volumes inclusive todo o conteúdo do BookStack (páginas, livros, usuários) e o histórico do Airflow (execuções passadas, Airflow Variables cadastradas, como o token do BookStack).** Depois desse comando, será preciso recadastrar o token do zero.</span>
 
 Se a intenção é só forçar um rebuild limpo **sem perder dados**, use uma versão menos destrutiva:
 
@@ -312,12 +312,12 @@ Busca os dados no site do SP156. Não sabe nada sobre BookStack ou banco, só co
 | `HEADERS` | Finge ser um navegador real | Sem isso, a proteção anti-bot bloqueia e o pipeline "roda", mas não extrai nada |
 | `orgao_e_da_smsub` | Filtra só SMSUB/SELIMP | O site lista várias secretarias |
 | `campos_da_pagina` | Extrai "O que é", "Prazo máximo", etc., preservando link e parágrafo (marcadores invisíveis `MARCADOR_LINK_*`/`MARCADOR_PARAGRAFO`) | Lê o texto corrido (não linha a linha) porque o site fragmenta títulos em vários `<span>`; sem os marcadores, `get_text()` apagava todo `<a>`/`<p>` original |
-| `pegar_menu` *(Etapa 1)* | Navega o menu via Selenium | Serve como checkpoint por categoria |
+| `pegar_menu` | Navega o menu via Selenium | Serve como checkpoint por categoria |
 | `pausa_entre_requisicoes` | Pausa aleatória antes de cada request | Sem isso, workers em paralelo martelam o site e ele bloqueia em massa (caso real: 602/615 páginas bloqueadas) |
-| `varrer_ids` *(Etapa 2)* | Testa faixa de IDs 700–7000 em paralelo | Acha páginas "órfãs" que não aparecem no menu; checkpoint por mini-lote de 100. <span style="color:red">**Não é chamada pela DAG atualmente** o código continua no arquivo, mas foi removida do pipeline por gerar bloqueio 403 excessivo</span> |
-| `completar_dados` *(Etapa 3)* | Extrai conteúdo completo + aplica filtro de órgão, sequencial (sem paralelismo) | Tem trava de segurança: se a maioria das páginas vier "sem conteúdo" ou for tudo bloqueio, falha de propósito em vez de publicar quase vazio (já aconteceu: 1/615 por causa de captcha) |
+| `varrer_ids`  | Testa faixa de IDs 700–7000 em paralelo | Acha páginas "órfãs" que não aparecem no menu; checkpoint por mini-lote de 100. <span style="color:red">**Não é chamada pela DAG atualmente** o código continua no arquivo, mas foi removida do pipeline por gerar bloqueio 403 excessivo</span> |
+| `completar_dados` | Extrai conteúdo completo + aplica filtro de órgão, sequencial (sem paralelismo) | Tem trava de segurança: se a maioria das páginas vier "sem conteúdo" ou for tudo bloqueio, falha de propósito em vez de publicar quase vazio (já aconteceu: 1/615 por causa de captcha) |
 
-**Próximo elo da cadeia:** salva `dados_completos.json` — é o que `bookstack_publicacao.py` lê pra saber o que publicar.
+**Próximo elo da cadeia:** salva `dados_completos.json` é o que `bookstack_publicacao.py` lê pra saber o que publicar.
 
 ---
 
@@ -333,7 +333,7 @@ Responde: **"esse conteúdo mudou de verdade desde a última vez?"** Sem isso, t
 | `decidir_acao` | Função pura (sem I/O). Checa **primeiro** se a página foi editada manualmente no BookStack, independente da fonte ter mudado, e só depois compara com a fonte | Garante que edição manual sempre tenha prioridade sobre mudança na fonte |
 | `recalibrar_todas_hash_publicado` | Migração pontual (rodar manualmente, uma vez só, nunca como parte da DAG): recalcula o `hash_publicado` a partir do HTML que o BookStack realmente guarda | Corrige o descompasso causado pelo BookStack reprocessar/reformatar o HTML ao salvar |
 
-`decidir_acao` devolve uma de 4 ações:
+**`Decidir_acao` devolve uma das 4 ações abaixo:**
 
 | Ação | Quando acontece |
 | :--- | :--- |
@@ -362,7 +362,7 @@ Fala com a API do BookStack. Hierarquia: **Estante → Livro → Capítulo → P
 | `CONTADOR_POR_STATUS` / `ROTULO_ACAO_EVENTO` | Dicionários de "tradução" (status técnico → nome do contador / texto de exibição) | Centraliza a tradução num lugar só, em vez de espalhar `if status == ...` pelo código |
 | `publicar_no_bookstack(arquivo, apenas_um=False)` | Função principal chamada pela DAG. `apenas_um=True` processa só a primeira categoria (uso só em teste, não em produção). Devolve um dicionário-resumo (`paginas_criadas`, `paginas_atualizadas`, etc.) | É esse resumo que aparece no log da task no Airflow |
 
-**Próximo elo da cadeia:** depois de publicar tudo, o pipeline segue pro backup — faz sentido fazer isso **depois**, pra capturar o conteúdo mais recente.
+**Próximo elo da cadeia:** depois de publicar tudo, o pipeline segue pro backup faz sentido fazer isso **depois**, pra capturar o conteúdo mais recente.
 
 ---
 
@@ -385,7 +385,7 @@ O mais simples de todos: dump do MariaDB → `.gz` → apaga backups antigos. Se
 ---
 
 ---
-### 5. `atualizar_servicos_sp156.py` — a DAG
+### 5. `atualizar_servicos_sp156.py` a DAG
 
 Não faz trabalho pesado sozinha importa os arquivos acima e define **ordem** e **regras** de quando cada um roda.
 
@@ -396,7 +396,7 @@ Não faz trabalho pesado sozinha importa os arquivos acima e define **ordem** e 
 | `schedule=None` | Não roda sozinha só quando disparada manualmente |
 | `max_active_runs=1` | Impede duas execuções ao mesmo tempo (evitaria coletar em duplicidade e causar mais bloqueio) |
 | `backup_bookstack_task` | Só chama `fazer_backup()` se o mês mudou desde o último backup salvo numa Airflow Variable é assim que "mensal" é implementado mesmo a DAG rodando várias vezes no mês |
-| `ajustar_permissoes >> tabela >> menu >> completos >> publicar >> backup` | O `>>` significa **"depende de"** — cada task só começa depois que a anterior termina com sucesso |
+| `ajustar_permissoes >> tabela >> menu >> completos >> publicar >> backup` | O `>>` significa **"depende de"** cada task só começa depois que a anterior termina com sucesso |
 
 ---
 
